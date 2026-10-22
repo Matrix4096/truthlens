@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { cn } from "@/lib/utils";
 
 /** 单个数字：定宽，变化时触发滚动入场动画 */
@@ -18,13 +18,37 @@ function Digit({ d }: { d: string }) {
  * 颜色全部取自主题变量，随主题切换自动适配。
  */
 export default function ElapsedTimer({ className }: { className?: string }) {
-  const startRef = useRef(Date.now());
+  const startRef = useRef<number | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const reduced = useReducedMotion();
   const [ms, setMs] = useState(0);
 
   useEffect(() => {
-    const t = setInterval(() => setMs(Date.now() - startRef.current), 31);
-    return () => clearInterval(t);
-  }, []);
+    const element = containerRef.current;
+    if (!element) return;
+    startRef.current ??= performance.now();
+    let visible = true;
+    let interval = 0;
+    const tick = () => setMs(performance.now() - startRef.current!);
+    const sync = () => {
+      clearInterval(interval);
+      if (visible && !document.hidden) {
+        tick();
+        interval = window.setInterval(tick, reduced ? 1000 : 100);
+      }
+    };
+    const observer = new IntersectionObserver(([entry]) => {
+      visible = entry.isIntersecting;
+      sync();
+    });
+    observer.observe(element);
+    document.addEventListener("visibilitychange", sync);
+    return () => {
+      clearInterval(interval);
+      observer.disconnect();
+      document.removeEventListener("visibilitychange", sync);
+    };
+  }, [reduced]);
 
   const totalCs = Math.floor(ms / 10);
   const cs = totalCs % 100;
@@ -38,11 +62,14 @@ export default function ElapsedTimer({ className }: { className?: string }) {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 16 }}
+      ref={containerRef}
+      role="timer"
+      aria-label={`核查已用时 ${mm} 分 ${ss} 秒`}
+      initial={reduced ? false : { opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       className={cn(
         "bg-chrome flex items-end justify-between border border-ink px-4 py-3 sm:px-6",
-        className,
+        className
       )}
     >
       <div className="pb-1">
@@ -57,16 +84,24 @@ export default function ElapsedTimer({ className }: { className?: string }) {
         <span className="font-giant flex text-5xl sm:text-6xl">
           <Digit d={mmStr[0]} />
           <Digit d={mmStr[1]} />
-          <span className="animate-blink mx-1 inline-block" style={{ width: "0.32em" }}>
+          <span
+            className="animate-blink mx-1 inline-block"
+            style={{ width: "0.32em" }}
+          >
             :
           </span>
           <Digit d={ssStr[0]} />
           <Digit d={ssStr[1]} />
         </span>
         {/* 右：.厘秒 */}
-        <span className="font-mono2 ml-2 text-2xl opacity-60 tabular-nums sm:text-3xl">
-          .{csStr}
-        </span>
+        {!reduced && (
+          <span
+            className="font-mono2 ml-2 text-2xl opacity-60 tabular-nums sm:text-3xl"
+            aria-hidden
+          >
+            .{csStr}
+          </span>
+        )}
       </div>
     </motion.div>
   );

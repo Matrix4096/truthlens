@@ -1,0 +1,112 @@
+.tl-site-header-inner {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  min-height: 72px;
+  max-width: 1600px;
+  margin-inline: auto;
+  padding-inline: clamp(0px, 1.5vw, 24px);
+}
+.tl-site-brand {
+  flex-shrink: 0;
+}
+.tl-site-tagline {
+  display: none;
+  margin-right: auto;
+}
+.tl-site-nav {
+  margin-left: auto;
+}
+.tl-site-nav-link {
+  position: relative;
+  min-width: 70px;
+}
+.tl-site-nav-link::after {
+  content: "";
+  position: absolute;
+  height: 2px;
+  bottom: 0;
+  inset-inline: 20%;
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 200ms ease;
+}
+.tl-site-nav-link:hover::after,
+.tl-site-nav-link:focus-visible::after,
+.tl-site-nav-active::after {
+  transform: scaleX(1);
+}
+.tl-site-theme-status {
+  display: none;
+}
+.tl-site-header button {
+  min-width: 40px;
+}
+.tl-site-header-inner > .relative > button,
+.tl-site-header-inner > a:last-of-type {
+  border-color: color-mix(in srgb, var(--c-fg) 22%, transparent);
+}
+.tl-site-popover {
+  animation: tl-menu-reveal 160ms ease-out both;
+}
+@keyframes tl-menu-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (min-width: 1180px) {
+  .tl-site-tagline,
+  .tl-site-theme-status {
+    display: flex;
+  }
+}
+@media (max-width: 600px) {
+  .tl-site-header-inner {
+    min-height: 64px;
+    padding-inline: 0;
+  }
+  .tl-site-brand {
+    gap: 8px;
+    padding-inline: 12px;
+  }
+  .tl-site-brand [data-logo-bars] {
+    padding: 5px;
+    gap: 2px;
+  }
+  .tl-site-brand .font-giant {
+    font-size: 15px;
+  }
+  .tl-site-brand .mono-label {
+    font-size: 6px;
+  }
+  .tl-site-nav-link {
+    min-width: 0;
+    padding-inline: 9px;
+  }
+  .tl-site-nav-link > span:first-child {
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .tl-site-header button {
+    min-width: 36px;
+  }
+}
+@media (max-width: 360px) {
+  .tl-site-brand [data-logo-bars] {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tl-site-nav-link::after {
+    transition: none;
+  }
+  .tl-site-popover {
+    animation: none;
+  }
+}

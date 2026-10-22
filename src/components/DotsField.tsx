@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { createCanvasAnimation } from "@/hooks/canvas-animation";
 
 interface Props {
   className?: string;
@@ -20,11 +21,18 @@ export default function DotsField({ className, tint = "#f5273f" }: Props) {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const compact = window.matchMedia("(pointer: coarse)").matches;
+    const gap = compact ? 15 : GAP;
 
     // tint → rgb
     const raw = tint.replace("#", "");
-    const full = raw.length === 3 ? raw.split("").map((c) => c + c).join("") : raw;
+    const full =
+      raw.length === 3
+        ? raw
+            .split("")
+            .map(c => c + c)
+            .join("")
+        : raw;
     const tv = parseInt(full, 16);
     const tr = (tv >> 16) & 255;
     const tg = (tv >> 8) & 255;
@@ -45,37 +53,47 @@ export default function DotsField({ className, tint = "#f5273f" }: Props) {
     let w = 0;
     let h = 0;
     let dots: Float32Array = new Float32Array(0);
-    let raf = 0;
-    let visible = true;
-    const mouse = { x: -9999, y: -9999, tx: -9999, ty: -9999, power: 0, tpower: 0 };
+    const mouse = {
+      x: -9999,
+      y: -9999,
+      tx: -9999,
+      ty: -9999,
+      power: 0,
+      tpower: 0,
+    };
 
     const rebuild = () => {
       const rect = canvas.getBoundingClientRect();
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const dpr = Math.min(compact ? 1.5 : 2, window.devicePixelRatio || 1);
       w = rect.width;
       h = rect.height;
       canvas.width = Math.round(w * dpr);
       canvas.height = Math.round(h * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      const cols = Math.max(1, Math.floor(w / GAP));
-      const rows = Math.max(1, Math.floor(h / GAP));
-      const ox = (w - (cols - 1) * GAP) / 2;
-      const oy = (h - (rows - 1) * GAP) / 2;
+      const cols = Math.max(1, Math.floor(w / gap));
+      const rows = Math.max(1, Math.floor(h / gap));
+      const ox = (w - (cols - 1) * gap) / 2;
+      const oy = (h - (rows - 1) * gap) / 2;
       dots = new Float32Array(cols * rows * 2);
       let k = 0;
       for (let j = 0; j < rows; j++) {
         for (let i = 0; i < cols; i++) {
-          dots[k++] = ox + i * GAP;
-          dots[k++] = oy + j * GAP;
+          dots[k++] = ox + i * gap;
+          dots[k++] = oy + j * gap;
         }
       }
+      animation.requestRender();
     };
 
-    const draw = () => {
+    const draw = (deltaMs: number) => {
       ctx.clearRect(0, 0, w, h);
-      mouse.x += (mouse.tx - mouse.x) * 0.16;
-      mouse.y += (mouse.ty - mouse.y) * 0.16;
-      mouse.power += (mouse.tpower - mouse.power) * 0.08;
+      const frames = deltaMs / (1000 / 60);
+      mouse.x += (mouse.tx - mouse.x) * (1 - 0.84 ** frames);
+      mouse.y += (mouse.ty - mouse.y) * (1 - 0.84 ** frames);
+      mouse.power =
+        deltaMs === 0
+          ? 0
+          : mouse.power + (mouse.tpower - mouse.power) * (1 - 0.92 ** frames);
 
       const R2 = RADIUS * RADIUS;
       const sigma2 = 2 * (RADIUS * 0.55) ** 2;
@@ -107,60 +125,51 @@ export default function DotsField({ className, tint = "#f5273f" }: Props) {
         }
         ctx.fillRect(px - sz / 2, py - sz / 2, sz, sz);
       }
+      // Once the pointer settles, preserve the canvas pixels without another frame.
+      return (
+        Math.abs(mouse.tpower - mouse.power) > 0.005 ||
+        (mouse.tpower > 0 &&
+          (Math.abs(mouse.tx - mouse.x) > 0.1 ||
+            Math.abs(mouse.ty - mouse.y) > 0.1))
+      );
     };
-
-    const loop = () => {
-      draw();
-      raf = requestAnimationFrame(loop);
-    };
-    const start = () => {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(loop);
-    };
-    const stop = () => cancelAnimationFrame(raf);
 
     const onMove = (e: PointerEvent) => {
+      if (e.pointerType === "touch" || !animation.motionAllowed) return;
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
       mouse.tx = x;
       mouse.ty = y;
       const margin = RADIUS * 0.4;
-      mouse.tpower = x > -margin && y > -margin && x < rect.width + margin && y < rect.height + margin ? 1 : 0;
+      mouse.tpower =
+        x > -margin &&
+        y > -margin &&
+        x < rect.width + margin &&
+        y < rect.height + margin
+          ? 1
+          : 0;
+      animation.requestRender();
     };
     const onLeave = () => {
       mouse.tpower = 0;
+      animation.requestRender();
     };
 
+    const animation = createCanvasAnimation(canvas, draw);
     rebuild();
     const ro = new ResizeObserver(rebuild);
     ro.observe(canvas);
-    const io = new IntersectionObserver(
-      ([entry]) => {
-        visible = entry.isIntersecting;
-        if (visible && !reduced) start();
-        else stop();
-      },
-      { threshold: 0 },
-    );
-    io.observe(canvas);
-
-    if (reduced) {
-      draw(); // 减少动态：静态绘制一次
-    } else {
-      start();
-      window.addEventListener("pointermove", onMove, { passive: true });
-      window.addEventListener("pointerdown", onMove, { passive: true });
-      document.documentElement.addEventListener("pointerleave", onLeave);
-    }
+    window.addEventListener("pointermove", onMove, { passive: true });
+    document.documentElement.addEventListener("pointerleave", onLeave);
+    window.addEventListener("blur", onLeave);
 
     return () => {
-      stop();
+      animation.dispose();
       ro.disconnect();
-      io.disconnect();
       window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerdown", onMove);
       document.documentElement.removeEventListener("pointerleave", onLeave);
+      window.removeEventListener("blur", onLeave);
     };
   }, [tint]);
 
