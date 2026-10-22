@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { createCanvasAnimation } from "@/hooks/canvas-animation";
 
 /**
  * 仿真黑洞标志（Canvas 实时渲染，从零重写 —— 主题为「引力」）：
@@ -16,7 +17,8 @@ export default function BlackHoleMark({ className }: { className?: string }) {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const compact = window.matchMedia("(pointer: coarse)").matches;
+    const dpr = Math.min(compact ? 1.5 : 2, window.devicePixelRatio || 1);
     const S = 320; // 逻辑分辨率（正方形）
     canvas.width = S * dpr;
     canvas.height = S * dpr;
@@ -74,7 +76,16 @@ export default function BlackHoleMark({ className }: { className?: string }) {
     // 引力透镜：像的视位置被推离中心
     const lensR = (r: number) => r + G_LENS / r;
 
-    function ellipseArc(rx: number, ry: number, rot: number, a0: number, a1: number, stroke: string | CanvasGradient, width: number, blur: number) {
+    function ellipseArc(
+      rx: number,
+      ry: number,
+      rot: number,
+      a0: number,
+      a1: number,
+      stroke: string | CanvasGradient,
+      width: number,
+      blur: number
+    ) {
       if (!ctx) return;
       ctx.save();
       ctx.translate(cx, cy);
@@ -100,11 +111,11 @@ export default function BlackHoleMark({ className }: { className?: string }) {
       return g;
     };
 
-    let raf = 0;
     let t = 0;
 
-    const draw = () => {
-      t += 0.016;
+    const draw = (deltaMs: number) => {
+      const frames = deltaMs / (1000 / 60);
+      t += deltaMs / 1000;
       const flick = 0.93 + Math.sin(t * 4.7) * 0.05 + Math.sin(t * 12.3) * 0.02;
       ctx.clearRect(0, 0, S, S);
 
@@ -115,33 +126,21 @@ export default function BlackHoleMark({ className }: { className?: string }) {
       // 同心圆
       for (const rr of [HZ * 1.6, HZ * 2.3, HZ * 3.1, HZ * 4.0, HZ * 5.0]) {
         ctx.beginPath();
-        let started = false;
-        for (let a = 0; a <= 360; a += 3) {
-          const th = (a / 180) * Math.PI;
-          const r2 = warpR(rr);
-          const x = cx + Math.cos(th) * r2;
-          const y = cy + Math.sin(th) * r2;
-          if (!started) {
-            ctx.moveTo(x, y);
-            started = true;
-          } else ctx.lineTo(x, y);
-        }
+        ctx.arc(cx, cy, warpR(rr), 0, TAU);
         ctx.stroke();
       }
       // 辐条
       for (let k = 0; k < 16; k++) {
         const th = (k / 16) * TAU;
         ctx.beginPath();
-        let started = false;
-        for (let r = HZ * 1.05; r <= HZ * 5.2; r += 7) {
-          const r2 = warpR(r);
-          const x = cx + Math.cos(th) * r2;
-          const y = cy + Math.sin(th) * r2;
-          if (!started) {
-            ctx.moveTo(x, y);
-            started = true;
-          } else ctx.lineTo(x, y);
-        }
+        ctx.moveTo(
+          cx + Math.cos(th) * warpR(HZ * 1.05),
+          cy + Math.sin(th) * warpR(HZ * 1.05)
+        );
+        ctx.lineTo(
+          cx + Math.cos(th) * warpR(HZ * 5.2),
+          cy + Math.sin(th) * warpR(HZ * 5.2)
+        );
         ctx.stroke();
       }
       ctx.restore();
@@ -184,8 +183,8 @@ export default function BlackHoleMark({ className }: { className?: string }) {
       // ========== 6. 引力俘获：加速坠入的物质 ==========
       for (const g of grains) {
         // 开普勒：角速度 r^-1.5，径向加速内落
-        g.th += 0.05 / Math.pow(g.r, 1.5);
-        g.r -= 0.0045 / Math.sqrt(Math.max(g.r, 0.3));
+        g.th += (frames * 0.05) / Math.pow(g.r, 1.5);
+        g.r -= (frames * 0.0045) / Math.sqrt(Math.max(g.r, 0.3));
         if (g.r < 0.52) {
           g.r = 1.15 + rnd() * 0.55;
           g.th = rnd() * TAU;
@@ -215,11 +214,9 @@ export default function BlackHoleMark({ className }: { className?: string }) {
 
       // ========== 9. 近侧吸积盘（前半，最亮） ==========
       ellipseArc(RX, RY, TILT, 0, Math.PI, diskGradient(1, flick), 10.5, 19);
-
-      raf = requestAnimationFrame(draw);
     };
-    raf = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(raf);
+    const animation = createCanvasAnimation(canvas, draw, compact ? 24 : 30);
+    return () => animation.dispose();
   }, []);
 
   return (
@@ -236,7 +233,10 @@ export default function BlackHoleMark({ className }: { className?: string }) {
       }}
       aria-hidden
     >
-      <canvas ref={ref} style={{ height: "0.98em", width: "0.98em", overflow: "visible" }} />
+      <canvas
+        ref={ref}
+        style={{ height: "0.98em", width: "0.98em", overflow: "visible" }}
+      />
     </span>
   );
 }

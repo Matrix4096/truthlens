@@ -21,7 +21,9 @@ export default function ResultView({ result, onReset }: Props) {
   const [tab, setTab] = useState<Tab>("all");
   const style = VERDICT_STYLE[result.verdict as Verdict];
 
-  const filtered = result.sources.filter((s) => (tab === "all" ? true : s.stance === tab));
+  const filtered = result.sources
+    .map((source, index) => ({ source, index }))
+    .filter(({ source }) => tab === "all" || source.stance === tab);
   const tabs: { key: Tab; label: string; count: number }[] = [
     { key: "all", label: "全部", count: result.stats.total },
     { key: "support", label: "支持", count: result.stats.support },
@@ -153,6 +155,8 @@ export default function ResultView({ result, onReset }: Props) {
             {tabs.map((t) => (
               <button
                 key={t.key}
+                type="button"
+                aria-pressed={tab === t.key}
                 onClick={() => setTab(t.key)}
                 className={cn(
                   "font-mono2 border-r border-panel-line px-3 py-1.5 text-[11px] last:border-r-0 transition-colors",
@@ -168,9 +172,9 @@ export default function ResultView({ result, onReset }: Props) {
         </div>
         {filtered.length ? (
           <div className="grid gap-px bg-[color-mix(in_srgb,var(--panel-fg)_10%,transparent)] md:grid-cols-2">
-            {filtered.map((s, i) => (
+            {filtered.map(({ source: s, index }) => (
               <div key={s.id} className="bg-panel">
-                <EvidenceCard source={s} index={i} />
+                <EvidenceCard source={s} index={index} />
               </div>
             ))}
           </div>

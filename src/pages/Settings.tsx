@@ -43,6 +43,7 @@ export default function Settings() {
 
   function submit(e: FormEvent) {
     e.preventDefault();
+    if (busy || !user || apiKey.trim().length < 10) return;
     setError("");
     setNotice("");
     setMut.mutate({ provider, apiKey: apiKey.trim() });
@@ -105,6 +106,8 @@ export default function Settings() {
                   <button
                     key={id}
                     type="button"
+                    disabled={busy}
+                    aria-pressed={provider === id}
                     onClick={() => setProvider(id)}
                     className={`px-3 py-2.5 text-left text-sm transition-colors ${
                       provider === id
@@ -119,9 +122,13 @@ export default function Settings() {
               </div>
 
               {/* Key 输入 */}
-              <div className="mono-label mb-2 text-[9px] text-panel-soft">API KEY · 仅存储于服务器</div>
+              <label htmlFor="llm-api-key" className="mono-label mb-2 block text-[9px] text-panel-soft">API KEY · 仅存储于服务器</label>
               <input
+                id="llm-api-key"
                 type="password"
+                disabled={busy}
+                required
+                maxLength={200}
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 placeholder={user.hasLlmKey ? "输入新 Key 以更换" : "sk-..."}
@@ -130,12 +137,12 @@ export default function Settings() {
               />
 
               {error && (
-                <div className="mb-4 border border-[#fb4d63] px-3 py-2 font-mono2 text-[11px] leading-relaxed text-[#fb4d63]">
+                <div role="alert" className="mb-4 border border-[#fb4d63] px-3 py-2 font-mono2 text-[11px] leading-relaxed text-[#fb4d63]">
                   {error}
                 </div>
               )}
               {notice && (
-                <div className="mb-4 border border-[#2f9e6e] px-3 py-2 font-mono2 text-[11px] leading-relaxed text-[#2f9e6e]">
+                <div role="status" className="mb-4 border border-[#2f9e6e] px-3 py-2 font-mono2 text-[11px] leading-relaxed text-[#2f9e6e]">
                   {notice}
                 </div>
               )}

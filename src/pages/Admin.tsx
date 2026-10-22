@@ -25,23 +25,30 @@ export default function Admin() {
   const detailQ = trpc.verify.byId.useQuery({ id: selectedId! }, { enabled: isAdmin && selectedId !== null });
   const delMut = trpc.admin.deleteUser.useMutation({
     onSuccess: () => {
+      setExpandedUser(null);
       void utils.admin.listUsers.invalidate();
       void utils.admin.overview.invalidate();
+      void utils.verify.history.invalidate();
+      void utils.verify.byId.invalidate();
     },
   });
 
   /* ---- 权限墙 ---- */
+  if (user === undefined) {
+    return <div role="status" className="bg-panel min-h-[70vh] px-4 py-24 text-center font-mono2 text-xs text-panel-soft">正在验证权限…</div>;
+  }
   if (!isAdmin) {
     return (
       <div className="bg-panel flex min-h-[70vh] flex-col items-center justify-center px-4 py-24 text-center">
         <ShieldAlert className="h-10 w-10 text-[#fb4d63]" strokeWidth={1.6} />
         <div className="font-giant text-stroke-panel mt-6 text-6xl sm:text-8xl">403</div>
         <p className="font-mono2 mt-4 text-xs text-panel-soft">
-          {user === undefined ? "正在验证权限…" : "该区域仅管理员可访问"}
+          该区域仅管理员可访问
         </p>
         {user === null && (
           <Link
             to="/auth"
+            state={{ from: "/admin" }}
             className="font-giant mt-6 bg-[color:var(--c-fg)] px-6 py-2.5 text-sm tracking-wider text-[color:var(--c-bg)]"
           >
             去登录
@@ -70,6 +77,13 @@ export default function Admin() {
           </div>
         )}
         {detailQ.data && <ResultView result={detailQ.data} />}
+        {detailQ.isError && (
+          <div role="alert" className="bg-panel px-4 py-12 text-center text-panel-soft">
+            <p className="font-mono2 text-xs">记录加载失败，请稍后重试。</p>
+            <button type="button" onClick={() => void detailQ.refetch()} className="mt-4 border border-panel-line px-4 py-2 text-sm">重新加载</button>
+          </div>
+        )}
+        {detailQ.data === null && <p className="bg-panel px-4 py-12 text-center text-sm text-panel-soft">记录不存在或已被删除。</p>}
       </div>
     );
   }
@@ -93,6 +107,15 @@ export default function Admin() {
       </div>
 
       <BinaryStrip seed={77} className="border-y border-ink-soft px-4 py-2 sm:px-8" />
+
+      {(overviewQ.isError || usersQ.isError || delMut.isError) && (
+        <div role="alert" className="bg-panel px-4 py-4 font-mono2 text-xs text-[#fb4d63] sm:px-8">
+          {delMut.error?.message ?? "管理数据加载失败，请检查网络后重试。"}
+          {(overviewQ.isError || usersQ.isError) && (
+            <button type="button" onClick={() => { void overviewQ.refetch(); void usersQ.refetch(); }} className="ml-4 border border-panel-line px-3 py-1">重新加载</button>
+          )}
+        </div>
+      )}
 
       {/* 统计卡片 */}
       <div className="grid gap-px border-b border-ink bg-[color-mix(in_srgb,var(--c-fg)_88%,transparent)] sm:grid-cols-3">
@@ -142,6 +165,8 @@ export default function Admin() {
               </button>
               {u.role !== "admin" && (
                 <button
+                  disabled={delMut.isPending}
+                  aria-label={`删除用户：${u.username}`}
                   onClick={() => {
                     if (window.confirm(`确定删除用户「${u.username}」及其全部核查记录？`)) {
                       delMut.mutate({ id: u.id });
@@ -169,7 +194,13 @@ export default function Admin() {
                         <span className="mono-label text-panel-soft animate-blink text-[9px]">LOADING…</span>
                       </div>
                     )}
-                    {!recordsQ.isLoading && (recordsQ.data ?? []).length === 0 && (
+                    {recordsQ.isError && (
+                      <div role="alert" className="font-mono2 py-4 text-center text-[10px] text-[#fb4d63]">
+                        记录加载失败。
+                        <button type="button" onClick={() => void recordsQ.refetch()} className="ml-2 underline">重新加载</button>
+                      </div>
+                    )}
+                    {!recordsQ.isLoading && !recordsQ.isError && (recordsQ.data ?? []).length === 0 && (
                       <div className="font-mono2 py-4 text-center text-[10px] text-panel-soft">该用户暂无核查记录</div>
                     )}
                     {(recordsQ.data ?? []).map((r) => {

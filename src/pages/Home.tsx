@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { trpc } from "@/providers/trpc";
 import ClaimInput from "@/components/ClaimInput";
 import ElapsedTimer from "@/components/ElapsedTimer";
@@ -14,7 +14,7 @@ import { useAuth, setGuestToken } from "@/lib/auth";
 
 const FEATURES = [
   { no: "01", title: "全网深度搜索", en: "DEEP SEARCH", desc: "多路检索策略并行扫描互联网，直取高权威来源正文内容。" },
-  { no: "02", title: "证据链交叉验证", en: "CROSS-CHECK", desc: "逐条比对来源立场、时效性与一致性，识别孤证与同源转载。" },
+  { no: "02", title: "证据链交叉验证", en: "CROSS-CHECK", desc: "展示来源立场、可靠性与分析要点，帮助你追溯核查依据。" },
   { no: "03", title: "AI 置信度判定", en: "VERDICT", desc: "基于证据权重计算可靠度评分，给出六级判定结论。" },
 ];
 
@@ -24,7 +24,9 @@ export default function Home() {
   const [jobId, setJobId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
+  const submissionLock = useRef(false);
   const resultAnchor = useRef<HTMLDivElement>(null);
+  const reducedMotion = useReducedMotion();
   const { user } = useAuth();
   const quotaQ = trpc.verify.quota.useQuery(undefined, { refetchOnWindowFocus: false });
   const quota = quotaQ.data;
@@ -45,7 +47,7 @@ export default function Home() {
       enabled: jobId !== null,
       refetchInterval: (query) => {
         const stage = query.state.data?.stage;
-        if (stage === "done" || stage === "error") return false;
+        if (stage === "done" || stage === "error" || query.state.status === "error") return false;
         return 1500;
       },
       retry: 2,
@@ -53,18 +55,23 @@ export default function Home() {
   );
 
   const job = statusQ.data;
-  const status: Status = !jobId
-    ? "idle"
-    : submitting
-      ? "analyzing"
-      : job
-        ? job.stage
-        : "analyzing";
+  const status: Status = submitting
+    ? "analyzing"
+    : submitError
+      ? "error"
+      : jobId
+        ? job?.stage ?? "analyzing"
+        : "idle";
 
   // 在拿到 jobId 前也必须锁定输入区，否则双击会启动多份相同的核查。
-  const busy = quotaQ.isLoading || submitting || (jobId !== null && status !== "done" && status !== "error");
+  const checking = submitting || (jobId !== null && status !== "done" && status !== "error");
+  const busy = quotaQ.isLoading || checking;
+  const connectionLost = jobId !== null && statusQ.isError && checking;
 
   async function runCheck(claim: string, mode: "deep" | "quick") {
+    // ref 同步锁住双击及快捷键，避免等待 React 重渲染期间提交两次。
+    if (submissionLock.current || busy || quotaExhausted) return;
+    submissionLock.current = true;
     setSubmitError("");
     setSubmitting(true);
     setJobId(null);
@@ -72,11 +79,14 @@ export default function Home() {
       const res = await startMut.mutateAsync({ claim, mode });
       setGuestToken(res.guestToken);
       setJobId(res.jobId);
+      void utils.verify.quota.invalidate();
     } catch (e) {
       console.error(e);
       setSubmitError((e as Error).message || "无法连接到核查服务，请稍后重试");
       setJobId(null);
+      void utils.verify.quota.invalidate();
     } finally {
+      submissionLock.current = false;
       setSubmitting(false);
     }
   }
@@ -84,18 +94,18 @@ export default function Home() {
   function reset() {
     setJobId(null);
     setSubmitError("");
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    window.scrollTo({ top: 0, behavior: reducedMotion ? "auto" : "smooth" });
   }
 
-  // 完成后刷新历史缓存并滚动到结果
+  // 完成后刷新历史缓存；等待结果面板入场后再滚动，否则 ref 尚未挂载。
   useEffect(() => {
     if (job?.stage === "done") {
-      utils.verify.history.invalidate();
-      utils.verify.quota.invalidate();
-      resultAnchor.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      void utils.verify.history.invalidate();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [job?.stage]);
+    if (job?.stage === "done" || job?.stage === "error") {
+      void utils.verify.quota.invalidate();
+    }
+  }, [job?.stage, utils]);
 
   const error = job?.stage === "error" ? job.error || "核查过程中出现错误" : submitError;
 
@@ -156,7 +166,15 @@ export default function Home() {
             <div className="mx-auto max-w-5xl">
               <ClaimInput busy={busy || quotaExhausted} onSubmit={runCheck} />
 
-              {busy && (
+              {quotaQ.isLoading && !checking && (
+                <p role="status" className="font-mono2 mt-4 text-xs opacity-70">正在读取可用额度…</p>
+              )}
+
+              {quotaQ.isError && !checking && (
+                <p role="status" className="font-mono2 mt-4 text-xs opacity-70">暂时无法读取额度，提交时会重新验证。</p>
+              )}
+
+              {checking && (
                 <div className="mt-8">
                   <ElapsedTimer />
                   <div className="[&>div]:border-t-0">
@@ -166,6 +184,20 @@ export default function Home() {
                       sources={job?.sources ?? null}
                     />
                   </div>
+                </div>
+              )}
+
+              {connectionLost && (
+                <div role="alert" className="bg-panel mt-4 flex flex-wrap items-center justify-between gap-3 border border-[#fb4d63] px-4 py-4">
+                  <span className="font-mono2 text-xs text-[#fb4d63]">连接中断，核查任务可能仍在继续。重新连接可获取同一任务的进度。</span>
+                  <button
+                    type="button"
+                    disabled={statusQ.isFetching}
+                    onClick={() => void statusQ.refetch()}
+                    className="font-giant border border-panel-line px-4 py-1.5 text-sm text-[color:var(--panel-fg)] disabled:opacity-50"
+                  >
+                    {statusQ.isFetching ? "正在连接…" : "重新连接"}
+                  </button>
                 </div>
               )}
 
@@ -197,7 +229,7 @@ export default function Home() {
                 </div>
               )}
 
-              {!busy && !user && quota?.limited && status !== "error" && quotaExhausted && (
+              {!busy && quota?.limited && quotaExhausted && (
                 <motion.div
                   initial={{ opacity: 0, y: 14, scale: 0.98 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -235,7 +267,7 @@ export default function Home() {
               )}
 
               {status === "error" && (
-                <div className="bg-panel mt-8 flex flex-wrap items-center justify-between gap-3 border border-[#fb4d63] px-4 py-4">
+                <div role="alert" className="bg-panel mt-8 flex flex-wrap items-center justify-between gap-3 border border-[#fb4d63] px-4 py-4">
                   <span className="font-mono2 text-xs text-[#fb4d63]">ERROR — 核查失败：{error}</span>
                   <button
                     onClick={reset}
@@ -274,6 +306,11 @@ export default function Home() {
             initial={{ opacity: 0, y: 32 }}
             animate={{ opacity: 1, y: 0, transition: { duration: 0.55, ease: [0.22, 1, 0.36, 1] } }}
             exit={{ opacity: 0, y: -40, transition: { duration: 0.4, ease: [0.4, 0, 1, 1] } }}
+            onAnimationComplete={(definition) => {
+              if (typeof definition === "object" && !Array.isArray(definition) && definition.opacity === 1) {
+                resultAnchor.current?.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "start" });
+              }
+            }}
           >
             {job?.result && <ResultView result={job.result} onReset={reset} />}
           </motion.section>

@@ -56,10 +56,15 @@ export default function ClaimInput({ busy, onSubmit }: Props) {
           <span className="mono-label text-panel-soft">{String(len).padStart(4, "0")} / 2000</span>
         </div>
         <textarea
+          aria-label="待核查信息"
+          maxLength={2000}
           value={value}
           onChange={(e) => setValue(e.target.value.slice(0, 2000))}
           onKeyDown={(e) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === "Enter") submit();
+            if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              submit();
+            }
           }}
           disabled={busy}
           placeholder="一条新闻、一个说法、一段传言……"
@@ -73,6 +78,7 @@ export default function ClaimInput({ busy, onSubmit }: Props) {
               <button
                 key={m.key}
                 type="button"
+                aria-pressed={mode === m.key}
                 disabled={busy}
                 onClick={() => pick(m.key)}
                 className={cn(

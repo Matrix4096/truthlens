@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -34,32 +34,57 @@ export default function SplitChars({
   replayKey,
   inject,
 }: Props) {
-  const [inView, setInView] = useState(false);
-  const [revealed, setRevealed] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
-    setInView(false);
-    setRevealed(false);
-    const raf = requestAnimationFrame(() => requestAnimationFrame(() => setInView(true)));
+    const element = ref.current;
+    if (!element) return;
+    element.classList.remove("is-in", "revealed");
+    let secondFrame = 0;
+    const firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => element.classList.add("is-in"));
+    });
     const total = startDelay + step * (Array.from(text).length + 1) + 900;
-    const timer = setTimeout(() => setRevealed(true), total);
+    const timer = setTimeout(() => element.classList.add("revealed"), total);
     return () => {
-      cancelAnimationFrame(raf);
+      cancelAnimationFrame(firstFrame);
+      cancelAnimationFrame(secondFrame);
       clearTimeout(timer);
     };
   }, [text, replayKey, startDelay, step]);
+
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    let visible = true;
+    const sync = () =>
+      element.toggleAttribute(
+        "data-animation-paused",
+        !visible || document.hidden
+      );
+    const observer = new IntersectionObserver(([entry]) => {
+      visible = entry.isIntersecting;
+      sync();
+    });
+    observer.observe(element);
+    document.addEventListener("visibilitychange", sync);
+    sync();
+    return () => {
+      observer.disconnect();
+      document.removeEventListener("visibilitychange", sync);
+    };
+  }, []);
 
   const chars = Array.from(text);
 
   return (
     <span
+      ref={ref}
       className={cn(
         "split-chars",
-        inView && "is-in",
-        revealed && "revealed",
         variant === "stamp" && "variant-stamp",
         roll && "auto-roll",
-        className,
+        className
       )}
       aria-label={text}
       role="text"
@@ -67,7 +92,10 @@ export default function SplitChars({
       {chars.map((ch, i) => (
         <span key={`${i}-${ch}`} style={{ display: "contents" }}>
           <span className="sc-mask" aria-hidden>
-            <span className="sc-reveal" style={{ transitionDelay: `${startDelay + i * step}ms` }}>
+            <span
+              className="sc-reveal"
+              style={{ transitionDelay: `${startDelay + i * step}ms` }}
+            >
               <span
                 className="sc-roll"
                 style={{
@@ -86,7 +114,11 @@ export default function SplitChars({
             <span className="sc-mask" aria-hidden>
               <span
                 className="sc-reveal"
-                style={{ transitionDelay: `${startDelay + (i + 1) * step}ms`, display: "inline-flex", alignItems: "center" }}
+                style={{
+                  transitionDelay: `${startDelay + (i + 1) * step}ms`,
+                  display: "inline-flex",
+                  alignItems: "center",
+                }}
               >
                 {inject.node}
               </span>

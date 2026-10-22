@@ -57,6 +57,7 @@
 
   html {
     color-scheme: light;
+    scrollbar-gutter: stable;
   }
 
   body {
@@ -251,6 +252,9 @@
 .split-chars.is-in .sc-reveal {
   transform: translateY(0) rotate(0deg);
 }
+.split-chars.revealed .sc-reveal {
+  will-change: auto;
+}
 
 /* 盖章入场（结果判定字） */
 .variant-stamp .sc-reveal {
@@ -306,6 +310,10 @@
   animation-name: char-roll-cycle;
   animation-timing-function: cubic-bezier(0.65, 0, 0.2, 1);
   animation-iteration-count: infinite;
+}
+.split-chars[data-animation-paused] .sc-roll {
+  animation-play-state: paused;
+  will-change: auto;
 }
 
 /* 黑洞标志自转 */
@@ -430,12 +438,12 @@ html.preloading [data-logo-anchor] {
 }
 .pagewipe-in-left,
 .pagewipe-in-right {
-  animation-duration: 400ms;
+  animation-duration: 260ms;
   animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1); /* 顺滑减速到位 */
 }
 .pagewipe-out-left,
 .pagewipe-out-right {
-  animation-duration: 390ms;
+  animation-duration: 250ms;
   animation-timing-function: cubic-bezier(0.55, 0, 0.85, 0.36); /* 平稳加速离场 */
 }
 .pagewipe-in-left { animation-name: pagewipe-in-left; }
@@ -449,10 +457,10 @@ html.preloading [data-logo-anchor] {
   100% { transform: translateY(0); opacity: 1; }
 }
 .pagewipe-caption {
-  animation: pagewipe-caption 620ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: pagewipe-caption 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 .pagewipe-caption-late {
-  animation: pagewipe-caption-late 680ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: pagewipe-caption-late 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 @keyframes pagewipe-caption-late {
   0% { transform: translateY(20px); opacity: 0; }
@@ -461,4 +469,18 @@ html.preloading [data-logo-anchor] {
 }
 @media (prefers-reduced-motion: reduce) {
   .pagewipe-panel, .pagewipe-caption, .pagewipe-caption-late { animation: none; }
+  .animate-marquee, .animate-marquee-fast, .animate-blink, .bh-spin,
+  .animate-pulse, .animate-spin, .auto-roll.revealed .sc-roll {
+    animation: none !important;
+    will-change: auto;
+  }
+  .split-chars .sc-reveal {
+    transform: none !important;
+    opacity: 1 !important;
+    transition: none !important;
+    will-change: auto;
+  }
+  body {
+    transition: none;
+  }
 }

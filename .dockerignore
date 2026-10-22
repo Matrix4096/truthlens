@@ -3,3 +3,11 @@ dist
 .git
 *.swp
 *.log
+.env
+.env.*
+!.env.example
+.agent-gw.json
+**/.agent-gw.json
+.kimi
+coverage
+*.zip

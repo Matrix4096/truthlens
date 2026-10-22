@@ -26,6 +26,7 @@ function WaveBackdrop() {
 
 export default function History() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [removeError, setRemoveError] = useState("");
   const utils = trpc.useUtils();
   const { user } = useAuth();
 
@@ -34,7 +35,17 @@ export default function History() {
   });
   const detailQ = trpc.verify.byId.useQuery({ id: selectedId! }, { enabled: selectedId !== null && !!user });
   const removeMut = trpc.verify.remove.useMutation({
-    onSuccess: () => utils.verify.history.invalidate(),
+    onMutate: () => setRemoveError(""),
+    onSuccess: async (result, input) => {
+      if (!result.ok) {
+        setRemoveError("记录删除失败或已不存在，请刷新列表后重试。");
+      }
+      await Promise.all([
+        utils.verify.history.invalidate(),
+        utils.verify.byId.invalidate({ id: input.id }),
+      ]);
+    },
+    onError: (error) => setRemoveError(error.message || "删除失败，请稍后重试。"),
   });
 
   /* ---- 加载中 ---- */
@@ -91,6 +102,12 @@ export default function History() {
           </div>
         )}
         {detailQ.data && <ResultView result={detailQ.data} />}
+        {detailQ.isError && (
+          <div role="alert" className="px-4 py-12 text-center text-panel-soft">
+            <p className="font-mono2 text-xs">记录加载失败，请检查网络后重试。</p>
+            <button type="button" onClick={() => void detailQ.refetch()} className="mt-4 border border-panel-line px-4 py-2 text-sm">重新加载</button>
+          </div>
+        )}
         {detailQ.data === null && !detailQ.isLoading && (
           <div className="px-4 py-20 text-center">
             <span className="mono-label text-panel-soft">记录不存在或已被删除</span>
@@ -116,7 +133,7 @@ export default function History() {
             历史记录
           </h1>
           <p className="font-serif-body mt-3 max-w-lg text-sm leading-relaxed text-panel-soft">
-            共 {items.length} 条核查存档。点击任意条目，查看完整证据链与判定细节。
+            显示最近 {items.length} 条核查存档。点击任意条目，查看完整证据链与判定细节。
           </p>
         </div>
 
@@ -130,13 +147,21 @@ export default function History() {
         </SectionBar>
 
         <div>
+          {removeError && <p role="alert" className="font-mono2 px-4 py-4 text-xs text-[#fb4d63] sm:px-8">{removeError}</p>}
+
+          {historyQ.isError && (
+            <div role="alert" className="px-4 py-12 text-center text-panel-soft">
+              <p className="font-mono2 text-xs">历史记录加载失败，请检查网络后重试。</p>
+              <button type="button" onClick={() => void historyQ.refetch()} className="mt-4 border border-panel-line px-4 py-2 text-sm">重新加载</button>
+            </div>
+          )}
           {historyQ.isLoading && (
             <div className="px-4 py-20 text-center">
               <span className="mono-label text-panel-soft animate-blink">LOADING…</span>
             </div>
           )}
 
-          {!historyQ.isLoading && items.length === 0 && (
+          {!historyQ.isLoading && !historyQ.isError && items.length === 0 && (
             <div className="px-4 py-24 text-center">
               <div className="font-giant text-stroke-panel text-6xl sm:text-8xl">EMPTY</div>
               <p className="font-mono2 mt-4 text-xs text-panel-soft">还没有核查记录，去核查台提交第一条信息吧</p>
@@ -173,7 +198,9 @@ export default function History() {
                   </button>
                   <button
                     onClick={() => removeMut.mutate({ id: item.id })}
-                    className="p-2 text-panel-soft opacity-0 transition-all group-hover:opacity-100 hover:text-[#fb4d63]"
+                    disabled={removeMut.isPending}
+                    aria-label={`删除记录：${item.claim}`}
+                    className="p-2 text-panel-soft transition-colors hover:text-[#fb4d63] disabled:opacity-40 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
                     title="删除记录"
                   >
                     <Trash2 className="h-4 w-4" />

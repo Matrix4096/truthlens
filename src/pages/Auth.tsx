@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { Link, useLocation } from "react-router";
 import { motion } from "framer-motion";
 import { ArrowLeft, LogIn, UserPlus } from "lucide-react";
@@ -16,12 +16,15 @@ export default function Auth() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const submitting = useRef(false);
   const navigate = useWipeNavigate();
   const location = useLocation();
   const from = (location.state as { from?: string } | null)?.from ?? "/history";
 
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (submitting.current) return;
+    submitting.current = true;
     setError("");
     setBusy(true);
     try {
@@ -31,6 +34,7 @@ export default function Auth() {
     } catch (err) {
       setError((err as Error).message || "操作失败，请稍后重试");
     } finally {
+      submitting.current = false;
       setBusy(false);
     }
   }
@@ -94,6 +98,8 @@ export default function Auth() {
                   <button
                     key={m.key}
                     type="button"
+                    disabled={busy}
+                    aria-pressed={mode === m.key}
                     onClick={() => {
                       setMode(m.key);
                       setError("");
@@ -110,8 +116,14 @@ export default function Auth() {
                 ))}
               </div>
 
-              <label className="mono-label mt-6 block text-[9px] text-panel-soft">USERNAME · 用户名</label>
+              <label htmlFor="auth-username" className="mono-label mt-6 block text-[9px] text-panel-soft">USERNAME · 用户名</label>
               <input
+                id="auth-username"
+                name="username"
+                required
+                minLength={2}
+                maxLength={32}
+                disabled={busy}
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 autoComplete="username"
@@ -119,8 +131,14 @@ export default function Auth() {
                 className="font-mono2 mt-1.5 w-full border border-panel-line bg-transparent px-3 py-2.5 text-sm text-[color:var(--panel-fg)] outline-none placeholder:text-panel-soft/50 focus:border-[color:var(--panel-fg)]"
               />
 
-              <label className="mono-label mt-4 block text-[9px] text-panel-soft">PASSWORD · 密码</label>
+              <label htmlFor="auth-password" className="mono-label mt-4 block text-[9px] text-panel-soft">PASSWORD · 密码</label>
               <input
+                id="auth-password"
+                name="password"
+                required
+                minLength={6}
+                maxLength={64}
+                disabled={busy}
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -129,7 +147,7 @@ export default function Auth() {
                 className="font-mono2 mt-1.5 w-full border border-panel-line bg-transparent px-3 py-2.5 text-sm text-[color:var(--panel-fg)] outline-none placeholder:text-panel-soft/50 focus:border-[color:var(--panel-fg)]"
               />
 
-              {error && <div className="font-mono2 mt-4 text-xs text-[#fb4d63]">ERROR — {error}</div>}
+              {error && <div role="alert" className="font-mono2 mt-4 text-xs text-[#fb4d63]">ERROR — {error}</div>}
 
               <button
                 type="submit"

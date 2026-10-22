@@ -71,7 +71,7 @@ flowchart TD
 ### 2. 获取源码并安装依赖
 
 ```bash
-git clone https://github.com/player4086/truthlens.git
+git clone https://github.com/Matrix4096/truthlens.git
 cd truthlens
 npm ci
 ```
@@ -198,15 +198,15 @@ truthlens/
 | `npm run check` | 检查前端、后端及相关配置的 TypeScript 类型。 |
 | `npm run lint` | 执行 ESLint 检查。 |
 | `npm run format` | 使用 Prettier 格式化项目文件，会修改文件。 |
-| `npm test` | 运行 Vitest；当前仓库配置了测试工具，但尚未包含匹配的测试用例。 |
+| `npm test` | 运行网关、响应安全、任务锁和动画生命周期回归测试。 |
 | `npm run build` | 构建前端到 `dist/public/`，打包后端到 `dist/boot.js`。 |
-| `npm start` | 以生产模式运行后端，适用于支持该脚本语法的 shell。 |
+| `npm start` | 以生产模式运行后端，支持 Windows、macOS 和 Linux。 |
 | `npm run preview` | 预览前端构建产物，不代替完整的后端服务。 |
 | `npm run db:push` | 直接同步数据库表结构。 |
 | `npm run db:generate` | 生成数据库迁移文件。 |
 | `npm run db:migrate` | 执行已有迁移文件。 |
 
-迁移目录当前只有占位文件，且 `.gitignore` 忽略 `db/migrations/*.sql`。若采用迁移式部署，需要先生成、审查并纳入版本管理，不能将空迁移目录视为已完成建表。
+迁移目录当前只有占位文件。若采用迁移式部署，需要先生成、审查并纳入版本管理，不能将空迁移目录视为已完成建表。本轮优化未修改数据库表结构。
 
 ## 生产部署
 
@@ -220,7 +220,7 @@ npm run build
 npm start
 ```
 
-Windows PowerShell 下，最后一步改为：
+也可在 Windows PowerShell 下显式启动：
 
 ```powershell
 $env:NODE_ENV = "production"
@@ -231,15 +231,23 @@ node dist/boot.js
 
 ### Docker 配置说明
 
-当前 [`Dockerfile`](Dockerfile) 保留了原平台的密钥复制步骤，会将 `.env` 和 `.agent-gw.json` 写入镜像；当前 [`.dockerignore`](.dockerignore) 也未排除这两个文件。仓库不包含实际密钥文件，直接构建会因缺少对应的 `COPY` 源文件而失败。
+[`Dockerfile`](Dockerfile) 使用 Node.js 22 多阶段构建和非 root 运行用户，不再复制凭证文件；[`.dockerignore`](.dockerignore) 排除实际环境配置和网关凭证。运行时必须注入环境变量，例如：
 
-迁移到自己的容器环境前，需要移除这些密钥复制指令，并在 `.dockerignore` 中排除 `.env`、`.agent-gw.json`；随后改为在运行时通过环境变量、`--env-file` 或 Secret 挂载注入。不要把包含真实密钥的镜像当作可公开分发的构建产物。
+```bash
+docker build -t truthlens .
+docker run --rm --env-file .env -p 3000:3000 truthlens
+```
+
+也可通过编排平台 Secret 注入。不要把真实密钥加入源码或镜像层。如果部署平台不能注入环境变量，需要先调整部署方式。
 
 ### 运行边界
 
 - 完整应用依赖 Node.js 后端、MySQL 和外部 API；仅发布前端静态文件无法提供核查、账号与历史功能。
 - 进行中的任务状态保存在当前进程内存中，按 30 分钟保留窗口定期清理；服务重启不会恢复未完成任务。扩展多实例前，需要处理任务状态和配额的一致性。
 - 已完成的结果写入 MySQL。数据库写入失败时，本次结果仍可能显示，但不会形成可查询的持久历史记录。
+- 额度读取失败时拒绝启动新任务；单进程内对同一用户/游客进行串行额度检查与任务预留，并限制每个身份最多 2 个运行任务、全站最多 100 个运行任务。该锁不能代替多实例共享的原子配额账本。
+- 每日额度仍基于历史记录计数：删除历史或结果落库失败仍会影响计数。正式扩大使用前，应将消费账本与可删除的历史内容分开。
+- 网关 HTTP 400/401/403 等错误不会重复发送；网络回退共用单次尝试的截止时间，429/5xx 仍有有界重试。整个核查任务目前尚无统一总截止时间或持久取消机制。
 
 ## 常见问题
 
@@ -251,6 +259,6 @@ node dist/boot.js
 | 登录、历史记录或建表报错 | 检查 MySQL 是否可达、数据库是否已创建、账号权限和 `DATABASE_URL`，确认已完成建表。 |
 | 管理员账号没有创建 | 检查 `ADMIN_PASSWORD` 是否至少 12 位、用户名是否合法，以及数据库是否已有管理员。 |
 | 修改配置后没有生效 | 网关和模型配置会被缓存，修改环境变量或凭证文件后需重启服务。 |
-| `npm test` 提示未找到测试 | 当前仓库没有匹配 `api/**/*.test.ts` 或 `api/**/*.spec.ts` 的文件，需补充用例后运行。 |
+| Windows 沙箱提示父目录 Access denied | 可用 `npm test -- --configLoader native` 和 `npx vite build --configLoader native` 验证测试及前端；原后端 esbuild 打包仍需具备正常目录读取权限的环境。 |
 
 请勿将实际 `.env`、网关凭证、数据库密码或 API Key 提交到仓库；可共享的配置模板为 [`.env.example`](.env.example)。
