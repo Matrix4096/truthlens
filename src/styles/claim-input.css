@@ -1,0 +1,262 @@
+.tl-claim {
+  min-width: 0;
+  width: 100%;
+}
+.tl-claim-panel {
+  --tl-input-line: color-mix(in srgb, var(--panel-fg) 18%, transparent);
+  background: var(--panel);
+  color: var(--panel-fg);
+  border: 1px solid var(--tl-input-line);
+  box-shadow: 0 8px 28px #0000000d;
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease;
+}
+.tl-claim-panel:focus-within {
+  border-color: var(--panel-fg);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--c-fg) 16%, transparent);
+}
+.tl-claim-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 19px 24px;
+  border-bottom: 1px solid var(--tl-input-line);
+}
+.tl-claim-label {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.tl-claim-label > span {
+  margin-right: 9px;
+}
+.tl-claim-count {
+  flex-shrink: 0;
+  font-family: "Space Mono", monospace;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.tl-claim-count > span {
+  opacity: 0.55;
+}
+.tl-claim-textarea {
+  display: block;
+  width: 100%;
+  min-height: 156px;
+  resize: vertical;
+  background: transparent;
+  padding: 24px 24px 14px;
+  color: var(--panel-fg);
+  font-size: 17px;
+  line-height: 1.85;
+  outline-offset: -5px;
+}
+.tl-claim-textarea:focus-visible {
+  outline: 1px dashed color-mix(in srgb, var(--panel-fg) 45%, transparent);
+}
+.tl-claim-textarea::placeholder {
+  color: color-mix(in srgb, var(--panel-fg) 50%, transparent);
+}
+.tl-claim-textarea:disabled {
+  opacity: 0.6;
+}
+.tl-claim-writing-hint {
+  margin: 0;
+  padding: 0 24px 20px;
+  font-size: 11px;
+  line-height: 1.7;
+  color: color-mix(in srgb, var(--panel-fg) 60%, transparent);
+}
+.tl-claim-mode-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--tl-input-line);
+  padding: 16px 24px;
+}
+.tl-claim-modes {
+  display: flex;
+  gap: 4px;
+}
+.tl-claim-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 12px;
+  font-size: 12px;
+  border: 1px solid transparent;
+  color: color-mix(in srgb, var(--panel-fg) 65%, transparent);
+  transition:
+    color 180ms ease,
+    background-color 180ms ease,
+    border-color 180ms ease;
+}
+.tl-claim-mode[aria-pressed="true"] {
+  color: var(--panel-fg);
+  background: color-mix(in srgb, var(--panel-fg) 8%, transparent);
+  border-color: var(--tl-input-line);
+}
+.tl-claim-mode-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+}
+.tl-claim-mode[aria-pressed="true"] .tl-claim-mode-dot {
+  background: currentColor;
+}
+.tl-claim-mode-en {
+  font-family: "Space Mono", monospace;
+  font-size: 9px;
+  opacity: 0.6;
+}
+.tl-claim-mode-hint {
+  color: color-mix(in srgb, var(--panel-fg) 60%, transparent);
+  font-size: 10px;
+  line-height: 1.6;
+}
+.tl-claim-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 24px;
+  border-top: 1px solid var(--tl-input-line);
+}
+.tl-claim-shortcut {
+  font-family: "Space Mono", monospace;
+  font-size: 10px;
+  color: color-mix(in srgb, var(--panel-fg) 55%, transparent);
+}
+.tl-claim-submit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 32px;
+  min-height: 48px;
+  margin-left: auto;
+  padding: 12px 22px;
+  font-size: 15px;
+  font-weight: 700;
+  background: var(--panel-fg);
+  color: var(--panel);
+  transition:
+    background-color 180ms ease,
+    transform 180ms ease;
+}
+.tl-claim-submit > span {
+  font-size: 22px;
+  transition: transform 180ms ease;
+}
+.tl-claim-submit:disabled {
+  cursor: not-allowed;
+  background: color-mix(in srgb, var(--panel-fg) 12%, transparent);
+  color: color-mix(in srgb, var(--panel-fg) 54%, transparent);
+}
+.tl-claim-mode:disabled,
+.tl-claim-example:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.tl-claim-examples {
+  margin-top: 25px;
+}
+.tl-claim-examples-label {
+  display: block;
+  margin-bottom: 12px;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+}
+.tl-claim-example-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 22px;
+}
+.tl-claim-example {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  padding: 13px 0;
+  border-top: 1px solid color-mix(in srgb, var(--c-fg) 25%, transparent);
+  text-align: left;
+  font-size: 11px;
+  line-height: 1.7;
+  transition:
+    padding 180ms ease,
+    background-color 180ms ease;
+}
+.tl-claim-example-index {
+  font-family: "Space Mono", monospace;
+  font-size: 9px;
+  opacity: 0.6;
+}
+.tl-claim-example-arrow {
+  margin-left: auto;
+  font-size: 15px;
+  transition: transform 180ms ease;
+}
+.tl-claim-panel button:focus-visible {
+  outline: 2px solid var(--panel-fg);
+  outline-offset: 3px;
+}
+.tl-claim-example:focus-visible {
+  outline: 2px solid var(--c-fg);
+  outline-offset: 3px;
+}
+@media (hover: hover) {
+  .tl-claim-mode:not(:disabled):hover {
+    color: var(--panel-fg);
+    border-color: var(--tl-input-line);
+  }
+  .tl-claim-submit:not(:disabled):hover > span,
+  .tl-claim-example:not(:disabled):hover .tl-claim-example-arrow {
+    transform: translate(2px, -2px);
+  }
+  .tl-claim-example:not(:disabled):hover {
+    padding-left: 6px;
+    background: color-mix(in srgb, var(--c-fg) 4%, transparent);
+  }
+}
+@media (max-width: 600px) {
+  .tl-claim-heading {
+    padding: 17px 18px;
+    gap: 8px;
+  }
+  .tl-claim-textarea {
+    padding: 20px 18px 12px;
+    min-height: 150px;
+    font-size: 16px;
+  }
+  .tl-claim-writing-hint {
+    padding: 0 18px 18px;
+  }
+  .tl-claim-mode-row,
+  .tl-claim-actions {
+    padding: 15px 18px;
+  }
+  .tl-claim-shortcut {
+    display: none;
+  }
+  .tl-claim-submit {
+    width: 100%;
+  }
+  .tl-claim-example-list {
+    grid-template-columns: 1fr;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tl-claim *,
+  .tl-claim-panel {
+    transition: none;
+  }
+  .tl-claim-submit > span,
+  .tl-claim-example-arrow {
+    transform: none !important;
+  }
+}

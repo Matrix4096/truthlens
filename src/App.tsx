@@ -1,7 +1,6 @@
 import { lazy, Suspense } from "react";
 import { Routes, Route } from "react-router";
 import SiteHeader from "./components/SiteHeader";
-import Preloader from "./components/Preloader";
 import PageWipe from "./components/PageWipe";
 import Home from "./pages/Home";
 import { useAuth } from "./lib/auth";
@@ -15,7 +14,6 @@ export default function App() {
   const { sessionError, retrySession } = useAuth();
   return (
     <div className="bg-chrome min-h-screen">
-      <Preloader />
       <SiteHeader />
       {sessionError && (
         <div role="alert" className="bg-panel flex flex-wrap items-center justify-center gap-3 border-b border-panel-line px-4 py-3 font-mono2 text-xs text-panel-soft">

@@ -4,33 +4,32 @@ import { cn } from "@/lib/utils";
 interface Props {
   text: string;
   className?: string;
-  /** rise = 逐字掩码升起；stamp = 逐字盖章砸入 */
+  /** rise = 逐字掩码升起；stamp = 轻微缩放显现 */
   variant?: "rise" | "stamp";
   startDelay?: number; // 首字延迟 ms
   step?: number; // 每字间隔 ms
-  /** 自动波浪翻滚（入场完成后，每隔 rollInterval 滚动一次） */
+  /** 入场完成后可选播放一次翻字，默认关闭 */
   roll?: boolean;
-  /** 自动翻滚周期 ms，默认 6500 */
+  /** 单次翻字时长 ms，默认 650；保留原有 prop 名以兼容调用方 */
   rollInterval?: number;
   /** 变更时重播动画 */
   replayKey?: unknown;
-  /** 在第 after 个字之后插入自定义节点（如黑洞标志），不参与翻滚 */
+  /** 在第 after 个字之后插入装饰节点，不参与翻字 */
   inject?: { after: number; node: ReactNode };
 }
 
 /**
- * 拆字动画（仿 wodniack.dev 标题）：
- * 将文本拆为逐字 span，支持交错入场与定时自动波浪翻滚。
- * 翻滚采用双字叠放条带：滚动恰好一个字高，终点与起点画面一致，循环无接缝。
+ * 标题只在出现或明确重播时入场，可选的翻字也仅播放一次。
+ * 独立的可访问文本避免读屏重复朗读装饰字形。
  */
 export default function SplitChars({
   text,
   className,
   variant = "rise",
   startDelay = 0,
-  step = 70,
-  roll = true,
-  rollInterval = 6500,
+  step = 45,
+  roll = false,
+  rollInterval = 650,
   replayKey,
   inject,
 }: Props) {
@@ -39,23 +38,28 @@ export default function SplitChars({
   useEffect(() => {
     const element = ref.current;
     if (!element) return;
+    const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    if (motion.matches) {
+      element.classList.add("is-in", "revealed");
+      return;
+    }
     element.classList.remove("is-in", "revealed");
     let secondFrame = 0;
     const firstFrame = requestAnimationFrame(() => {
       secondFrame = requestAnimationFrame(() => element.classList.add("is-in"));
     });
-    const total = startDelay + step * (Array.from(text).length + 1) + 900;
+    const total = startDelay + step * (Array.from(text).length + 1) + 560;
     const timer = setTimeout(() => element.classList.add("revealed"), total);
     return () => {
       cancelAnimationFrame(firstFrame);
       cancelAnimationFrame(secondFrame);
       clearTimeout(timer);
     };
-  }, [text, replayKey, startDelay, step]);
+  }, [text, replayKey, startDelay, step, variant, className, roll]);
 
   useEffect(() => {
     const element = ref.current;
-    if (!element) return;
+    if (!element || !roll) return;
     let visible = true;
     const sync = () =>
       element.toggleAttribute(
@@ -73,7 +77,7 @@ export default function SplitChars({
       observer.disconnect();
       document.removeEventListener("visibilitychange", sync);
     };
-  }, []);
+  }, [roll]);
 
   const chars = Array.from(text);
 
@@ -86,9 +90,8 @@ export default function SplitChars({
         roll && "auto-roll",
         className
       )}
-      aria-label={text}
-      role="text"
     >
+      <span className="sr-only">{text}</span>
       {chars.map((ch, i) => (
         <span key={`${i}-${ch}`} style={{ display: "contents" }}>
           <span className="sc-mask" aria-hidden>
@@ -104,9 +107,11 @@ export default function SplitChars({
                 }}
               >
                 <span className="sc-glyph">{ch === " " ? "\u00A0" : ch}</span>
-                <span className="sc-glyph" aria-hidden>
-                  {ch === " " ? "\u00A0" : ch}
-                </span>
+                {roll && (
+                  <span className="sc-glyph" aria-hidden>
+                    {ch === " " ? "\u00A0" : ch}
+                  </span>
+                )}
               </span>
             </span>
           </span>
