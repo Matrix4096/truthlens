@@ -112,8 +112,8 @@ export default function Home() {
   return (
     <div>
       {/* ===== HERO（铬层红/黑 + 交互流线场） ===== */}
-      <section className="bg-chrome relative overflow-hidden border-b border-ink">
-        <FlowField className="absolute inset-0 h-full w-full" />
+      <section className="truthlens-hero bg-chrome relative overflow-hidden border-b border-ink">
+        <FlowField className="truthlens-hero-flow absolute inset-0 h-full w-full" />
         <div className="relative">
           <div className="flex items-center justify-between px-4 pt-4 sm:px-8">
             <span className="mono-label opacity-70">Deep-search fact-check engine</span>
@@ -121,10 +121,7 @@ export default function Home() {
           </div>
 
           <div className="px-4 pt-10 pb-6 sm:px-8 sm:pt-14">
-            <h1
-              className="font-giant leading-[0.88] tracking-tight"
-              style={{ fontSize: "clamp(64px, 12.5vw, 180px)" }}
-            >
+            <h1 className="truthlens-hero-title font-giant leading-[0.88] tracking-tight">
               <SplitChars
                 text="真相透镜"
                 step={110}

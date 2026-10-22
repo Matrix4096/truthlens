@@ -111,7 +111,7 @@ export default function SplitChars({
             </span>
           </span>
           {inject && i === inject.after && (
-            <span className="sc-mask" aria-hidden>
+            <span className="sc-mask sc-inject" aria-hidden>
               <span
                 className="sc-reveal"
                 style={{

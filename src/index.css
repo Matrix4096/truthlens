@@ -7,6 +7,8 @@
     /* 主题铬层（红 ↔ 黑 可切换） */
     --c-bg: #f5273f;
     --c-fg: #170f0e;
+    --black-hole-tint: #ffb59f;
+    --black-hole-glow: rgba(255, 197, 153, 0.14);
     /* 内容面板：固定近黑 */
     --panel: #121010;
     --panel-fg: #f3ece7;
@@ -37,22 +39,32 @@
   html[data-theme="ink"] {
     --c-bg: #170f0e;
     --c-fg: #f5273f;
+    --black-hole-tint: #ffab7c;
+    --black-hole-glow: rgba(255, 128, 76, 0.12);
   }
   html[data-theme="phosphor"] {
     --c-bg: #0d0208;
     --c-fg: #00ff41;
+    --black-hole-tint: #b9f6cc;
+    --black-hole-glow: rgba(115, 241, 161, 0.1);
   }
   html[data-theme="klein"] {
     --c-bg: #002fa7;
     --c-fg: #f2efe9;
+    --black-hole-tint: #c4dcff;
+    --black-hole-glow: rgba(175, 207, 255, 0.14);
   }
   html[data-theme="warning"] {
     --c-bg: #ffd400;
     --c-fg: #17130a;
+    --black-hole-tint: #fff0b0;
+    --black-hole-glow: rgba(126, 67, 24, 0.1);
   }
   html[data-theme="paper"] {
     --c-bg: #f2efe9;
     --c-fg: #c8102e;
+    --black-hole-tint: #f4ab8c;
+    --black-hole-glow: rgba(157, 67, 44, 0.09);
   }
 
   html {
@@ -314,6 +326,86 @@
 .split-chars[data-animation-paused] .sc-roll {
   animation-play-state: paused;
   will-change: auto;
+}
+
+/* 首页字标中的黑洞：只为注入节点放开光晕，不改变逐字掩码。 */
+.truthlens-hero {
+  isolation: isolate;
+}
+.truthlens-hero-flow {
+  opacity: 0.76;
+  pointer-events: none;
+}
+.truthlens-hero-title {
+  font-size: clamp(64px, 12.5vw, 180px);
+}
+.truthlens-hero-title .split-chars {
+  flex-wrap: nowrap;
+}
+.truthlens-hero-title .sc-mask {
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 1;
+}
+.truthlens-hero-title .sc-inject {
+  overflow: visible;
+  z-index: 0;
+}
+.truthlens-hero-title .sc-inject .sc-reveal {
+  transform: scale(0.94);
+  opacity: 0;
+  transition:
+    transform 0.85s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.6s ease;
+}
+.truthlens-hero-title .split-chars.is-in .sc-inject .sc-reveal {
+  transform: scale(1);
+  opacity: 1;
+}
+.truthlens-hero-title .black-hole-mark {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 1.25em;
+  height: 1.25em;
+  isolation: isolate;
+  pointer-events: none;
+}
+.truthlens-hero-title .black-hole-mark::before {
+  content: "";
+  position: absolute;
+  inset: 0 -0.1em;
+  z-index: 0;
+  background: radial-gradient(ellipse closest-side, var(--black-hole-glow), transparent 82%);
+  pointer-events: none;
+}
+.truthlens-hero-title .black-hole-canvas,
+.truthlens-hero-title .black-hole-fallback {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 1;
+  display: block;
+  width: 1.55em;
+  height: 0.98em;
+  max-width: none;
+  transform: translate(-50%, -50%);
+}
+.truthlens-hero-title .black-hole-canvas {
+  visibility: hidden;
+}
+.truthlens-hero-title .black-hole-mark[data-renderer="webgl"] .black-hole-canvas {
+  visibility: visible;
+}
+.truthlens-hero-title .black-hole-mark[data-renderer="webgl"] .black-hole-fallback {
+  display: none;
+}
+@media (max-width: 399px) {
+  .truthlens-hero-title {
+    font-size: clamp(44px, 16vw, 64px);
+  }
 }
 
 /* 黑洞标志自转 */
