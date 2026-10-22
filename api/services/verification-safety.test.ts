@@ -109,15 +109,15 @@ describe("model output validation", () => {
 });
 
 describe("task reservation locking", () => {
-  it("allows only one concurrent request to consume the last quota", async () => {
+  it("reserves the final active slot once across concurrent requests", async () => {
     const lock = createKeyedLock();
-    let used = 0;
+    let active = 1;
     const reserve = () =>
       lock(["user:1"], async () => {
-        const previous = used;
+        const previous = active;
         await Promise.resolve();
-        if (previous >= 1) return false;
-        used++;
+        if (previous >= 2) return false;
+        active++;
         return true;
       });
     expect(await Promise.all([reserve(), reserve(), reserve()])).toEqual([
@@ -125,9 +125,11 @@ describe("task reservation locking", () => {
       false,
       false,
     ]);
-    expect(used).toBe(1);
+    expect(active).toBe(2);
+    active--; // Completion releases a slot without a daily counter or reset.
+    expect(await reserve()).toBe(true);
   });
-  it("serializes different guest tokens sharing the same IP", async () => {
+  it("serializes overlapping resource locks regardless of key ordering", async () => {
     const lock = createKeyedLock();
     let running = 0;
     const action = async () => {
@@ -137,8 +139,8 @@ describe("task reservation locking", () => {
       running--;
     };
     await Promise.all([
-      lock(["guest:a", "ip:x"], action),
-      lock(["ip:x", "guest:b"], action),
+      lock(["owner:a", "shared-resource"], action),
+      lock(["shared-resource", "owner:b"], action),
     ]);
   });
   it("releases locks after failure and does not block unrelated owners", async () => {

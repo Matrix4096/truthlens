@@ -1,4 +1,4 @@
-/** Serialize quota checks and task reservation in this process. No lock spans an AI call. */
+/** Serialize an owner's task lookup and reservation. No lock spans an AI call. */
 export function createKeyedLock() {
   const tails = new Map<string, Promise<void>>();
 
@@ -22,7 +22,7 @@ export function createKeyedLock() {
     keys: string[],
     action: () => Promise<T>
   ): Promise<T> {
-    // Consistent ordering avoids deadlocks for overlapping guest/IP identities.
+    // Consistent ordering also keeps overlapping resource locks deadlock-free.
     const ordered = [...new Set(keys)].sort();
     const acquire = (index: number): Promise<T> =>
       index === ordered.length

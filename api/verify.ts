@@ -18,7 +18,7 @@ import {
 import type { LlmConfig } from "./services/agentgw";
 import { getDb } from "./queries/connection";
 import { users, verifications } from "@db/schema";
-import { and, count, desc, eq, gte, or } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import type {
   ClaimAnalysis,
   SearchMode,
@@ -29,7 +29,7 @@ import type {
   HistoryItem,
   Reliability,
 } from "@contracts/types";
-import { GUEST_LIMIT, LLM_PROVIDERS, USER_DAILY_LIMIT } from "@contracts/types";
+import { LLM_PROVIDERS } from "@contracts/types";
 import type { LlmProviderId } from "@contracts/types";
 import type { TrpcContext } from "./context";
 import { toJobProgress, publicSource } from "./services/verification-state";
@@ -59,7 +59,6 @@ const jobs = new Map<string, JobState>();
 const withOwnerLock = createKeyedLock();
 const GUEST_COOKIE = "tl-guest";
 const GUEST_HEADER = "x-guest-token";
-const GUEST_COOKIE_TTL_SECONDS = 365 * 24 * 60 * 60;
 // 开发环境允许未配置密钥，但进程重启后会使游客身份失效；生产环境应始终设置 APP_SECRET。
 const guestSigningSecret =
   process.env.GUEST_TOKEN_SECRET ||
@@ -69,69 +68,64 @@ const guestSigningSecret =
 function sweepJobs() {
   const cutoff = Date.now() - 30 * 60 * 1000;
   for (const [id, j] of jobs) {
-    if (j.createdAt < cutoff) jobs.delete(id);
+    if (j.createdAt < cutoff && !isActiveJob(j)) jobs.delete(id);
   }
 }
 setInterval(sweepJobs, 5 * 60 * 1000).unref();
 
-/** 以 UTC+8 为日界的今日起点：每日免费额度按中国自然日重置，与服务器时区无关 */
-function todayStartUtcMs(): number {
-  const d = new Date(Date.now() + 8 * 3600 * 1000);
-  d.setUTCHours(0, 0, 0, 0);
-  return d.getTime() - 8 * 3600 * 1000;
-}
-
-/** 读取用户自带的 LLM 配置（解密落库密文），未设置或已损坏返回 null */
-async function userLlmConfig(userId: number): Promise<LlmConfig | null> {
+/** Only the signed-in user's saved, decryptable key may fund a verification. */
+async function userLlmConfig(userId: number): Promise<LlmConfig> {
+  let row: { p: string | null; k: string | null } | undefined;
   try {
-    const db = getDb();
-    const rows = await db
+    const rows = await getDb()
       .select({ p: users.llmProvider, k: users.llmApiKeyEnc })
       .from(users)
       .where(eq(users.id, userId))
       .limit(1);
-    const row = rows[0];
-    if (!row?.p || !row.k) return null;
-    const preset = LLM_PROVIDERS[row.p as LlmProviderId];
-    if (!preset) return null;
-    return {
-      apiKey: decryptApiKey(row.k),
-      baseUrl: preset.baseUrl,
-      model: preset.model,
-    };
+    row = rows[0];
   } catch {
     throw new TRPCError({
       code: "INTERNAL_SERVER_ERROR",
-      message: "暂时无法读取模型配置，请稍后重试",
+      message: "暂时无法读取已保存的 API 密钥，请稍后重试",
     });
   }
-}
-
-/** 注册用户今日已用配额：今日落库记录数 + 进行中任务数 */
-async function dailyUsed(userId: number): Promise<number> {
-  let used = 0;
+  if (!row?.p || !row.k) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message:
+        "请先在「API 密钥设置」中选择平台并保存自己的 API Key，再开始核查",
+    });
+  }
+  if (!Object.hasOwn(LLM_PROVIDERS, row.p)) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message:
+        "已保存的模型平台无效，请在「API 密钥设置」中重新选择平台并保存 Key",
+    });
+  }
+  let apiKey: string;
   try {
-    const db = getDb();
-    const [row] = await db
-      .select({ n: count() })
-      .from(verifications)
-      .where(
-        and(
-          eq(verifications.userId, userId),
-          gte(verifications.createdAt, new Date(todayStartUtcMs()))
-        )
-      );
-    used = row?.n ?? 0;
+    apiKey = decryptApiKey(row.k).trim();
   } catch {
     throw new TRPCError({
-      code: "INTERNAL_SERVER_ERROR",
-      message: "暂时无法读取核查额度，请稍后重试",
+      code: "PRECONDITION_FAILED",
+      message:
+        "已保存的 API 密钥无法解密，请在「API 密钥设置」中重新保存自己的 Key",
     });
   }
-  for (const j of jobs.values()) {
-    if (j.userId === userId && isActiveJob(j)) used++;
+  if (
+    apiKey.length < 10 ||
+    apiKey.length > 200 ||
+    !/^[\x21-\x7e]+$/.test(apiKey)
+  ) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message:
+        "已保存的 API 密钥格式无效，请在「API 密钥设置」中重新保存自己的 Key",
+    });
   }
-  return used;
+  const preset = LLM_PROVIDERS[row.p as LlmProviderId];
+  return { apiKey, baseUrl: preset.baseUrl, model: preset.model };
 }
 
 function isActiveJob(job: JobState) {
@@ -144,16 +138,6 @@ function isSameOwner(
   guestId: string | null
 ) {
   return job.userId === userId && job.guestId === guestId;
-}
-
-function ownerLockKeys(
-  userId: number | null,
-  guestId: string | null,
-  ipHash: string | null
-) {
-  return userId !== null
-    ? [`user:${userId}`]
-    : [`guest:${guestId}`, ...(ipHash ? [`ip:${ipHash}`] : [])];
 }
 
 function cookieValue(ctx: TrpcContext, name: string): string | null {
@@ -195,72 +179,6 @@ function guestTokenFrom(ctx: TrpcContext): string | null {
     guestIdFromCookie(ctx) ??
     verifyGuestToken(ctx.req.headers.get(GUEST_HEADER))
   );
-}
-
-function issueGuestCookie(ctx: TrpcContext, id: string) {
-  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
-  ctx.resHeaders.append(
-    "Set-Cookie",
-    `${GUEST_COOKIE}=${id}.${signGuestId(id)}; Path=/; Max-Age=${GUEST_COOKIE_TTL_SECONDS}; HttpOnly; SameSite=Lax${secure}`
-  );
-}
-
-/** 获取或签发游客身份；同时返回签名令牌，供前端在 Cookie 不可用时走请求头通道。 */
-function getOrCreateGuestToken(ctx: TrpcContext): {
-  id: string;
-  token: string;
-} {
-  const current = guestTokenFrom(ctx);
-  if (current)
-    return { id: current, token: `${current}.${signGuestId(current)}` };
-  const id = randomUUID();
-  issueGuestCookie(ctx, id);
-  return { id, token: `${id}.${signGuestId(id)}` };
-}
-
-/** 访问者 IP 的 HMAC 摘要：取代理透传的首个 X-Forwarded-For。本地/未知来源返回 null（退化为仅按游客身份计数）。 */
-function clientIpHash(ctx: TrpcContext): string | null {
-  const fwd = ctx.req.headers.get("x-forwarded-for");
-  const ip =
-    (fwd ? fwd.split(",")[0]?.trim() : null) ||
-    ctx.req.headers.get("x-real-ip")?.trim() ||
-    null;
-  if (!ip || ip === "127.0.0.1" || ip === "::1") return null;
-  return createHmac("sha256", guestSigningSecret)
-    .update(`ip:${ip}`)
-    .digest("hex");
-}
-
-/** 游客已用配额：该游客身份与该访问 IP 落库记录的并集 + 任一匹配的进行中任务 */
-async function guestUsage(
-  guestId: string,
-  ipHash: string | null
-): Promise<number> {
-  let used = 0;
-  try {
-    const db = getDb();
-    const cond = ipHash
-      ? or(eq(verifications.guestId, guestId), eq(verifications.ipHash, ipHash))
-      : eq(verifications.guestId, guestId);
-    const [row] = await db
-      .select({ n: count() })
-      .from(verifications)
-      .where(cond);
-    used = row?.n ?? 0;
-  } catch {
-    throw new TRPCError({
-      code: "INTERNAL_SERVER_ERROR",
-      message: "暂时无法读取核查额度，请稍后重试",
-    });
-  }
-  for (const j of jobs.values()) {
-    if (
-      isActiveJob(j) &&
-      (j.guestId === guestId || (ipHash !== null && j.ipHash === ipHash))
-    )
-      used++;
-  }
-  return used;
 }
 
 // ---------- 工具 ----------
@@ -313,7 +231,7 @@ function todayText() {
 
 async function analyzeClaim(
   claim: string,
-  llm: LlmConfig | null = null
+  llm: LlmConfig
 ): Promise<ClaimAnalysis> {
   const sys =
     "你是专业事实核查专家，擅长把一段待核查信息拆解为可验证的事实主张，并设计检索策略。只输出 JSON，不要输出任何其他文字。";
@@ -557,7 +475,7 @@ async function assessSources(
   claim: string,
   sources: RawSource[],
   mode: SearchMode,
-  llm: LlmConfig | null = null
+  llm: LlmConfig
 ): Promise<Assessment[] | null> {
   if (sources.length === 0) return null;
   const sys =
@@ -580,7 +498,7 @@ async function verdictOnEvidence(
   coreClaims: string[],
   sources: RawSource[],
   mode: SearchMode,
-  llm: LlmConfig | null = null
+  llm: LlmConfig
 ): Promise<JudgeLLM | null> {
   const quick = mode === "quick";
   const sys =
@@ -694,13 +612,18 @@ function mergeJudgment(
 
 async function runJob(job: JobState, mode: SearchMode) {
   try {
+    // Keep this guard even though start validates BYOK, so a future internal caller
+    // cannot accidentally invoke chatJson's site-level fallback.
+    const llm = job.llm;
+    if (!llm?.apiKey)
+      throw new Error("核查任务缺少个人 API 密钥，请重新配置后提交");
     job.stage = "analyzing";
     // 提速：LLM 拆解与原文首轮检索并行启动，分析完成时首路证据通常已就位
     // 快速模式跳过 LLM 拆解，直接使用模板检索式（仅一次判定调用，显著更快）
     const quick = mode === "quick";
     const analysisP = quick
       ? Promise.resolve(templateQueries(job.claim))
-      : analyzeClaim(job.claim, job.llm ?? null);
+      : analyzeClaim(job.claim, llm);
     const headP: Promise<RoundOutcome> = webSearch(job.claim.slice(0, 80), 2)
       .then(items => ({ items }))
       .catch(e => ({ items: [], error: (e as Error).message }));
@@ -723,7 +646,7 @@ async function runJob(job: JobState, mode: SearchMode) {
       job.claim,
       sources,
       mode,
-      job.llm ?? null
+      llm
     ).catch(() => null);
     if (mode !== "quick") await enrichSources(sources);
     const parsed = await verdictOnEvidence(
@@ -731,7 +654,7 @@ async function runJob(job: JobState, mode: SearchMode) {
       analysis.coreClaims,
       sources,
       mode,
-      job.llm ?? null
+      llm
     );
     const assessments = await assessP;
     const judged = mergeJudgment(
@@ -750,47 +673,42 @@ async function runJob(job: JobState, mode: SearchMode) {
       createdAt: new Date(),
     };
 
-    // 与额度检查共享锁：避免计数快照与 done 状态跨过落库边界导致漏算。
-    await withOwnerLock(
-      ownerLockKeys(job.userId, job.guestId, job.ipHash ?? null),
-      async () => {
-        // 持久化（失败不影响本次结果）
-        try {
-          const db = getDb();
-          const payload = {
-            reasoning: result.reasoning,
-            sources: result.sources,
-            queries: result.queries,
-            coreClaims: result.coreClaims,
-            stats: result.stats,
-            mode: result.mode ?? "deep",
-          };
-          const inserted = await db.insert(verifications).values({
-            claim: result.claim,
-            verdict: result.verdict,
-            confidence: result.confidence,
-            credibilityScore: result.credibilityScore,
-            summary: result.summary,
-            payload,
-            userId: job.userId ?? null,
-            guestId: job.guestId ?? null,
-            ipHash: job.ipHash ?? null,
-          });
-          result.id = Number(
-            (inserted as unknown as Array<{ insertId: number | string }>)[0]
-              ?.insertId ?? 0
-          );
-        } catch (e) {
-          console.error(
-            "[verify] 历史记录写入失败（不影响本次结果）:",
-            (e as Error).message
-          );
-        }
-
-        job.result = result;
-        job.stage = "done";
-      }
-    );
+    // Keep a reservation active until persistence and result publication finish.
+    // Completed history is never consulted when accepting a new task.
+    try {
+      const payload = {
+        reasoning: result.reasoning,
+        sources: result.sources,
+        queries: result.queries,
+        coreClaims: result.coreClaims,
+        stats: result.stats,
+        mode: result.mode ?? "deep",
+      };
+      const inserted = await getDb()
+        .insert(verifications)
+        .values({
+          claim: result.claim,
+          verdict: result.verdict,
+          confidence: result.confidence,
+          credibilityScore: result.credibilityScore,
+          summary: result.summary,
+          payload,
+          userId: job.userId ?? null,
+          guestId: job.guestId ?? null,
+          ipHash: job.ipHash ?? null,
+        });
+      result.id = Number(
+        (inserted as unknown as Array<{ insertId: number | string }>)[0]
+          ?.insertId ?? 0
+      );
+    } catch (e) {
+      console.error(
+        "[verify] 历史记录写入失败（不影响本次结果）:",
+        (e as Error).message
+      );
+    }
+    job.result = result;
+    job.stage = "done";
   } catch (e) {
     console.error("[verify] 任务失败:", (e as Error).message);
     job.error = (e as Error).message || "核查过程中出现错误";
@@ -805,7 +723,7 @@ async function runJob(job: JobState, mode: SearchMode) {
 // ---------- 路由 ----------
 
 export const verifyRouter = createRouter({
-  /** 提交核查任务，立即返回任务号 */
+  /** 登录用户使用自己的已保存 API Key 提交核查任务。 */
   start: publicQuery
     .input(
       z.object({
@@ -814,118 +732,54 @@ export const verifyRouter = createRouter({
       })
     )
     .mutation(async ({ input, ctx }) => {
-      sweepJobs();
       const user = await getSessionUser(ctx);
-      const userId = user?.id ?? null;
-      let guestId: string | null = null;
-      let guestToken: string | undefined;
-      let ipHash: string | null = null;
       if (!user) {
-        const g = getOrCreateGuestToken(ctx);
-        guestId = g.id;
-        guestToken = g.token;
-        ipHash = clientIpHash(ctx);
+        throw new TRPCError({
+          code: "UNAUTHORIZED",
+          message:
+            "请先登录，并在「API 密钥设置」中保存自己的 API Key 后再核查",
+        });
       }
-
-      return withOwnerLock(ownerLockKeys(userId, guestId, ipHash), async () => {
-        // 检查、配额读取、任务预留必须作为一个整体，避免并发标签页重复提交。
-        const runningJob = [...jobs.values()].find(
+      sweepJobs();
+      return withOwnerLock([`user:${user.id}`], async () => {
+        // Re-read credentials before deduplication as well: deleting a saved key
+        // must prevent new starts, including repeated submissions by an admin.
+        const llm = await userLlmConfig(user.id);
+        const activeJobs = [...jobs.values()].filter(isActiveJob);
+        const runningJob = activeJobs.find(
           job =>
-            isActiveJob(job) &&
             job.claim === input.claim &&
             job.mode === input.mode &&
-            isSameOwner(job, userId, guestId)
+            isSameOwner(job, user.id, null)
         );
-        if (runningJob) return { jobId: runningJob.id, guestToken };
-
-        // 注册用户：自带 Key 走自己的额度且不限次；否则受每日免费额度约束（管理员不限）
-        let jobLlm: LlmConfig | null = null;
-        if (user) {
-          jobLlm = await userLlmConfig(user.id);
-          if (!jobLlm && user.role !== "admin") {
-            const used = await dailyUsed(user.id);
-            if (used >= USER_DAILY_LIMIT) {
-              throw new TRPCError({
-                code: "FORBIDDEN",
-                message: `今日免费 ${USER_DAILY_LIMIT} 次已用完，明日（UTC+8 零点）自动重置；也可在「API 密钥设置」中填写自己的 Key 后不限次使用`,
-              });
-            }
-          }
-        }
-
-        if (!user) {
-          // 上方 getOrCreateGuestId 已保证游客标识非空（闭包捕获使 TS 无法窄化，这里显式取值）
-          const gid: string = guestId!;
-          // 配额 = 游客身份 ∪ 访问 IP 的已用次数（清除浏览器数据/换无痕不会重置）
-          const used = await guestUsage(gid, ipHash);
-          if (used >= GUEST_LIMIT) {
-            throw new TRPCError({
-              code: "FORBIDDEN",
-              message: `未注册游客最多可免费核查 ${GUEST_LIMIT} 次（按设备与网络环境计）。注册账号后每日可免费核查 ${USER_DAILY_LIMIT} 次并保存历史记录`,
-            });
-          }
-        }
-        const activeJobs = [...jobs.values()].filter(isActiveJob);
+        if (runningJob) return { jobId: runningJob.id };
         if (
           activeJobs.length >= 100 ||
-          activeJobs.filter(job => isSameOwner(job, userId, guestId)).length >=
-            2
+          activeJobs.filter(job => job.userId === user.id).length >= 2
         ) {
           throw new TRPCError({
             code: "TOO_MANY_REQUESTS",
             message: "正在处理的核查任务较多，请等待已有任务完成后再试",
           });
         }
+        // No await between the global capacity snapshot and Map insertion:
+        // different user locks cannot overbook the process-wide limit.
         const job: JobState = {
           id: randomUUID(),
           stage: "analyzing",
           mode: input.mode,
           claim: input.claim,
-          userId,
-          guestId,
+          userId: user.id,
+          guestId: null,
           createdAt: Date.now(),
-          llm: jobLlm,
-          ipHash,
+          llm,
+          ipHash: null,
         };
         jobs.set(job.id, job);
         void runJob(job, input.mode);
-        return { jobId: job.id, guestToken };
+        return { jobId: job.id };
       });
     }),
-
-  /** 查询当前访客/用户的配额使用情况 */
-  quota: publicQuery.query(async ({ ctx }) => {
-    const user = await getSessionUser(ctx);
-    if (user) {
-      const ownKey = (await userLlmConfig(user.id)) !== null;
-      if (user.role === "admin" || ownKey) {
-        return {
-          limited: false,
-          used: 0,
-          limit: USER_DAILY_LIMIT,
-          guestToken: null,
-          hasLlmKey: ownKey,
-        };
-      }
-      const used = await dailyUsed(user.id);
-      return {
-        limited: true,
-        used,
-        limit: USER_DAILY_LIMIT,
-        guestToken: null,
-        hasLlmKey: false,
-      };
-    }
-    const guest = getOrCreateGuestToken(ctx);
-    const used = await guestUsage(guest.id, clientIpHash(ctx));
-    return {
-      limited: true,
-      used,
-      limit: GUEST_LIMIT,
-      guestToken: guest.token,
-      hasLlmKey: false,
-    };
-  }),
 
   /** 轮询任务状态 */
   status: publicQuery

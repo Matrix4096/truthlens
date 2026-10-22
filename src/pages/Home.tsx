@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router";
+import { Link, useLocation, useNavigate } from "react-router";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { trpc } from "@/providers/trpc";
 import ClaimInput from "@/components/ClaimInput";
@@ -10,7 +10,8 @@ import FlowField from "@/components/FlowField";
 import SplitChars from "@/components/SplitChars";
 import BlackHoleMark from "@/components/BlackHoleMark";
 import { BinaryStrip, Marquee, SectionBar, CellIndex } from "@/components/Bits";
-import { useAuth, setGuestToken } from "@/lib/auth";
+import { useAuth } from "@/lib/auth";
+import { LLM_PROVIDERS, type LlmProviderId } from "@contracts/types";
 
 const FEATURES = [
   { no: "01", title: "全网深度搜索", en: "DEEP SEARCH", desc: "多路检索策略并行扫描互联网，直取高权威来源正文内容。" },
@@ -21,21 +22,46 @@ const FEATURES = [
 type Status = "idle" | Stage | "done" | "error";
 
 export default function Home() {
+  const { user } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const routeState = location.state as { claimDraft?: unknown; draftOwnerId?: unknown } | null;
+  const initialDraft = typeof routeState?.claimDraft === "string" &&
+    (routeState.draftOwnerId === null || routeState.draftOwnerId === user?.id)
+    ? routeState.claimDraft.slice(0, 2000)
+    : "";
+
+  useEffect(() => {
+    // 草稿仅随本次接入流程传递；消费后移除，避免切换账号时再次恢复。
+    if (user !== undefined && typeof routeState?.claimDraft === "string") {
+      navigate(location.pathname + location.search, { replace: true, state: null });
+    }
+  }, [location.pathname, location.search, navigate, routeState?.claimDraft, user]);
+
+  // 账号改变时卸载任务状态与轮询，旧账号的迟到响应不能进入新账号页面。
+  return <HomeSession key={user?.id ?? "visitor"} initialDraft={initialDraft} />;
+}
+
+function HomeSession({ initialDraft }: { initialDraft: string }) {
+  const [draft, setDraft] = useState(initialDraft);
   const [jobId, setJobId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const submissionLock = useRef(false);
+  const mounted = useRef(false);
   const resultAnchor = useRef<HTMLDivElement>(null);
   const reducedMotion = useReducedMotion();
-  const { user } = useAuth();
-  const quotaQ = trpc.verify.quota.useQuery(undefined, { refetchOnWindowFocus: false });
-  const quota = quotaQ.data;
-  // 游客签名令牌落盘：嵌入预览中 Cookie 可能被浏览器拦截，后续请求改走 x-guest-token 头
+  const { user, sessionError, retrySession } = useAuth();
+  const provider = user?.llmProvider && Object.hasOwn(LLM_PROVIDERS, user.llmProvider)
+    ? LLM_PROVIDERS[user.llmProvider as LlmProviderId]
+    : undefined;
+  const ready = !sessionError && !!user?.hasLlmKey && !!provider;
+  const draftState = { claimDraft: draft, draftOwnerId: user?.id ?? null };
+
   useEffect(() => {
-    setGuestToken(quota?.guestToken);
-  }, [quota?.guestToken]);
-  const quotaLeft = quota && quota.limited ? Math.max(0, quota.limit - quota.used) : null;
-  const quotaExhausted = quotaLeft === 0;
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   const startMut = trpc.verify.start.useMutation();
   const utils = trpc.useUtils();
@@ -44,7 +70,7 @@ export default function Home() {
   const statusQ = trpc.verify.status.useQuery(
     { jobId: jobId! },
     {
-      enabled: jobId !== null,
+      enabled: jobId !== null && !!user && !sessionError,
       refetchInterval: (query) => {
         const stage = query.state.data?.stage;
         if (stage === "done" || stage === "error" || query.state.status === "error") return false;
@@ -65,29 +91,29 @@ export default function Home() {
 
   // 在拿到 jobId 前也必须锁定输入区，否则双击会启动多份相同的核查。
   const checking = submitting || (jobId !== null && status !== "done" && status !== "error");
-  const busy = quotaQ.isLoading || checking;
+  const busy = checking;
   const connectionLost = jobId !== null && statusQ.isError && checking;
 
   async function runCheck(claim: string, mode: "deep" | "quick") {
     // ref 同步锁住双击及快捷键，避免等待 React 重渲染期间提交两次。
-    if (submissionLock.current || busy || quotaExhausted) return;
+    if (submissionLock.current || busy || !ready) return;
     submissionLock.current = true;
     setSubmitError("");
     setSubmitting(true);
     setJobId(null);
     try {
       const res = await startMut.mutateAsync({ claim, mode });
-      setGuestToken(res.guestToken);
+      if (!mounted.current) return;
       setJobId(res.jobId);
-      void utils.verify.quota.invalidate();
     } catch (e) {
+      if (!mounted.current) return;
       console.error(e);
       setSubmitError((e as Error).message || "无法连接到核查服务，请稍后重试");
       setJobId(null);
-      void utils.verify.quota.invalidate();
+      void utils.auth.me.invalidate();
     } finally {
       submissionLock.current = false;
-      setSubmitting(false);
+      if (mounted.current) setSubmitting(false);
     }
   }
 
@@ -101,9 +127,6 @@ export default function Home() {
   useEffect(() => {
     if (job?.stage === "done") {
       void utils.verify.history.invalidate();
-    }
-    if (job?.stage === "done" || job?.stage === "error") {
-      void utils.verify.quota.invalidate();
     }
   }, [job?.stage, utils]);
 
@@ -161,15 +184,44 @@ export default function Home() {
             className="bg-chrome px-4 py-10 sm:px-8"
           >
             <div className="mx-auto max-w-5xl">
-              <ClaimInput busy={busy || quotaExhausted} onSubmit={runCheck} />
+              <ClaimInput
+                busy={busy}
+                submitDisabled={!ready}
+                submitLabel={sessionError ? "请先恢复登录状态" : user === undefined ? "正在验证登录状态" : !user ? "登录后开始核查" : !ready ? "配置模型后开始核查" : undefined}
+                value={draft}
+                onChange={setDraft}
+                onSubmit={runCheck}
+              />
 
-              {quotaQ.isLoading && !checking && (
-                <p role="status" className="font-mono2 mt-4 text-xs opacity-70">正在读取可用额度…</p>
-              )}
-
-              {quotaQ.isError && !checking && (
-                <p role="status" className="font-mono2 mt-4 text-xs opacity-70">暂时无法读取额度，提交时会重新验证。</p>
-              )}
+              <div
+                id="model-access-status"
+                role={sessionError ? "alert" : "status"}
+                className="mt-4 flex flex-wrap items-center justify-between gap-3 border border-ink px-4 py-3"
+              >
+                {sessionError ? (
+                  <>
+                    <p className="font-mono2 text-xs">暂时无法确认登录和模型状态。草稿可以继续编辑，恢复连接后即可继续。</p>
+                    <button type="button" onClick={retrySession} className="font-giant border border-ink px-3 py-1 text-xs tracking-wider">重新连接</button>
+                  </>
+                ) : user === undefined ? (
+                  <p className="font-mono2 text-xs">正在验证登录状态，你可以先填写待核查信息。</p>
+                ) : !user ? (
+                  <>
+                    <p className="font-mono2 text-xs">登录后接入自己的模型 API Key，即可提交核查。当前草稿会随接入流程保留。</p>
+                    <Link data-no-transition to="/auth" state={{ ...draftState, from: "/settings" }} className="font-giant border border-ink px-3 py-1 text-xs tracking-wider transition-colors hover:bg-ink">登录 / 注册后接入 →</Link>
+                  </>
+                ) : !ready ? (
+                  <>
+                    <p className="font-mono2 text-xs">请先选择模型平台并保存有效的 API Key。当前草稿会随配置流程保留。</p>
+                    <Link data-no-transition to="/settings" state={draftState} className="font-giant border border-ink px-3 py-1 text-xs tracking-wider transition-colors hover:bg-ink">配置我的模型 →</Link>
+                  </>
+                ) : (
+                  <>
+                    <p className="font-mono2 text-xs">已接入 {provider?.label} · 使用你自己的模型 Key，调用受供应商余额与限流规则约束。</p>
+                    <Link data-no-transition to="/settings" state={draftState} className="font-giant border border-ink px-3 py-1 text-xs tracking-wider transition-colors hover:bg-ink">管理模型 →</Link>
+                  </>
+                )}
+              </div>
 
               {checking && (
                 <div className="mt-8">
@@ -196,71 +248,6 @@ export default function Home() {
                     {statusQ.isFetching ? "正在连接…" : "重新连接"}
                   </button>
                 </div>
-              )}
-
-              {!busy && !user && quota?.limited && status !== "error" && !quotaExhausted && (
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border border-ink px-4 py-2.5">
-                  <span className="font-mono2 text-[11px] tracking-wide">
-                    游客免费额度 · 剩余 <b>{quotaLeft}</b> / {quota.limit} 次核查（按设备与网络环境计）
-                  </span>
-                  <Link
-                    to="/auth"
-                    className="font-giant border border-ink px-3 py-1 text-xs tracking-wider transition-colors hover:bg-ink"
-                  >
-                    注册每日 5 次 →
-                  </Link>
-                </div>
-              )}
-
-              {!busy && user && quota?.limited && status !== "error" && !quotaExhausted && (
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border border-ink px-4 py-2.5">
-                  <span className="font-mono2 text-[11px] tracking-wide">
-                    今日免费额度 · 剩余 <b>{quotaLeft}</b> / {quota.limit} 次核查
-                  </span>
-                  <Link
-                    to="/settings"
-                    className="font-giant border border-ink px-3 py-1 text-xs tracking-wider transition-colors hover:bg-ink"
-                  >
-                    自带 Key 不限次 →
-                  </Link>
-                </div>
-              )}
-
-              {!busy && quota?.limited && quotaExhausted && (
-                <motion.div
-                  initial={{ opacity: 0, y: 14, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-                  className="bg-panel mt-4 border-2 border-[#fb4d63]"
-                >
-                  <div className="flex items-center justify-between border-b border-[#fb4d63]/40 px-4 py-2">
-                    <span className="mono-label text-[8px] text-panel-soft">GUEST QUOTA · 游客免费额度</span>
-                    <span className="mono-label animate-blink text-[8px] text-[#fb4d63]">● QUOTA EXHAUSTED</span>
-                  </div>
-                  <div className="flex flex-wrap items-center justify-between gap-4 px-4 py-5">
-                    <div className="flex items-center gap-4">
-                      <span className="font-giant text-5xl leading-none text-[#fb4d63] sm:text-6xl">
-                        0<span className="text-2xl text-panel-soft sm:text-3xl">/{quota.limit}</span>
-                      </span>
-                      <div>
-                        <div className="font-giant text-lg tracking-wider text-[color:var(--panel-fg)] sm:text-xl">
-                          {user ? "今日免费额度已用尽" : "免费额度已用尽"}
-                        </div>
-                        <div className="font-mono2 mt-1 max-w-md text-[10px] leading-relaxed text-panel-soft">
-                          {user
-                            ? `每日免费 ${quota.limit} 次，明日零点自动重置。填写自己的 API Key 即可不限次使用。`
-                            : `未注册游客最多可核查 ${quota.limit} 次，按设备与网络环境计，清除浏览器数据不会重置。注册账号每日可免费核查 5 次，并保存专属历史核查存档。`}
-                        </div>
-                      </div>
-                    </div>
-                    <Link
-                      to={user ? "/settings" : "/auth"}
-                      className="font-giant animate-pulse bg-[#fb4d63] px-6 py-3 text-base tracking-wider text-[#170f0e] transition-opacity hover:opacity-85"
-                    >
-                      {user ? "填写 API Key →" : "注册 / 登录 →"}
-                    </Link>
-                  </div>
-                </motion.div>
               )}
 
               {status === "error" && (

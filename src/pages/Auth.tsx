@@ -1,36 +1,41 @@
 import { useRef, useState, type FormEvent } from "react";
-import { Link, useLocation } from "react-router";
+import { Link, useLocation, useNavigate } from "react-router";
 import { motion } from "framer-motion";
 import { ArrowLeft, LogIn, UserPlus } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { useWipeNavigate } from "@/components/PageWipe";
 import { BinaryStrip, SectionBar } from "@/components/Bits";
-import { GUEST_LIMIT } from "@contracts/types";
 
 type Mode = "login" | "register";
 
 export default function Auth() {
-  const { user, login, register, logout } = useAuth();
+  const { user, sessionError, retrySession, login, register, logout } = useAuth();
   const [mode, setMode] = useState<Mode>("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const submitting = useRef(false);
-  const navigate = useWipeNavigate();
+  const navigate = useNavigate();
   const location = useLocation();
-  const from = (location.state as { from?: string } | null)?.from ?? "/history";
+  const routeState = location.state as { from?: unknown; claimDraft?: unknown; draftOwnerId?: unknown } | null;
+  const from = typeof routeState?.from === "string" && ["/", "/settings", "/history", "/admin"].includes(routeState.from)
+    ? routeState.from
+    : "/settings";
+  const draftState = typeof routeState?.claimDraft === "string"
+    ? { claimDraft: routeState.claimDraft.slice(0, 2000), draftOwnerId: typeof routeState.draftOwnerId === "number" ? routeState.draftOwnerId : null }
+    : undefined;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (submitting.current) return;
+    if (submitting.current || sessionError || user === undefined) return;
     submitting.current = true;
     setError("");
     setBusy(true);
     try {
       if (mode === "login") await login(username.trim(), password);
       else await register(username.trim(), password);
-      navigate(from, { replace: true });
+      setPassword("");
+      navigate(from, { replace: true, state: draftState });
     } catch (err) {
       setError((err as Error).message || "操作失败，请稍后重试");
     } finally {
@@ -46,7 +51,7 @@ export default function Auth() {
           {user ? "账号" : mode === "login" ? "登录" : "注册"}
         </h1>
         <p className="font-serif-body mt-3 max-w-lg text-sm leading-relaxed opacity-80">
-          注册账号每日可免费核查 5 次并保存历史存档（自带 API Key 不限次）；未注册游客最多可免费核查 {GUEST_LIMIT} 次。
+          登录后接入自己的模型 API Key，即可核查信息并保存历史存档。模型调用使用你在对应供应商的账户。
         </p>
       </div>
 
@@ -61,7 +66,14 @@ export default function Auth() {
         <div className="mx-auto max-w-md border border-ink bg-panel">
           <SectionBar>Access · 账号准入</SectionBar>
 
-          {user ? (
+          {sessionError ? (
+            <div role="alert" className="px-6 py-8 font-mono2 text-xs text-[#fb4d63]">
+              暂时无法确认登录状态，请检查网络后重试。
+              <button type="button" onClick={retrySession} className="mt-4 block border border-panel-line px-4 py-2">重新连接</button>
+            </div>
+          ) : user === undefined ? (
+            <div role="status" className="px-6 py-8 font-mono2 text-xs text-panel-soft">正在验证登录状态…</div>
+          ) : user ? (
             <div className="px-6 py-8">
               <div className="mono-label text-[9px] text-panel-soft">CURRENT ACCOUNT · 当前账号</div>
               <div className="mt-3 flex items-center justify-between gap-3 border border-panel-line px-4 py-3">
@@ -70,6 +82,14 @@ export default function Auth() {
                   {user.role === "admin" ? "管理员 ADMIN" : "用户 USER"}
                 </span>
               </div>
+              <Link
+                data-no-transition
+                to={user.hasLlmKey ? "/" : "/settings"}
+                state={draftState}
+                className="font-giant mt-5 block bg-[color:var(--c-fg)] px-4 py-3 text-center text-base tracking-wider text-[color:var(--c-bg)] transition-opacity hover:opacity-85"
+              >
+                {user.hasLlmKey ? "开始核查 →" : "接入我的模型 →"}
+              </Link>
               <div className="mt-5 flex flex-wrap gap-3">
                 <Link
                   to="/history"
@@ -86,7 +106,7 @@ export default function Auth() {
               </div>
             </div>
           ) : (
-            <form onSubmit={submit} className="px-6 py-8">
+            <form onSubmit={submit} aria-busy={busy} className="px-6 py-8">
               {/* 模式切换 */}
               <div className="grid grid-cols-2 gap-px border border-panel-line bg-[color-mix(in_srgb,var(--panel-fg)_14%,transparent)]">
                 {(
@@ -159,14 +179,14 @@ export default function Auth() {
               </button>
 
               <p className="font-mono2 mt-4 text-center text-[10px] leading-relaxed text-panel-soft">
-                {mode === "login" ? "还没有账号？切换到「注册」创建账号" : "注册即代表同意本站仅供核查参考使用"}
+                {mode === "login" ? "还没有账号？切换到「注册」创建账号" : "注册完成后，请接入自己的模型 API Key。"}
               </p>
             </form>
           )}
         </div>
 
         <div className="mx-auto mt-6 max-w-md">
-          <Link to="/" className="mono-label inline-flex items-center gap-1.5 opacity-70 hover:opacity-100">
+          <Link data-no-transition to="/" state={draftState} className="mono-label inline-flex items-center gap-1.5 opacity-70 hover:opacity-100">
             <ArrowLeft className="h-3.5 w-3.5" /> 返回核查台
           </Link>
         </div>

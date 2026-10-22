@@ -19,11 +19,14 @@ const EXAMPLES = [
 
 interface Props {
   busy: boolean;
+  submitDisabled?: boolean;
+  submitLabel?: string;
+  value: string;
+  onChange: (value: string) => void;
   onSubmit: (claim: string, mode: SearchMode) => void;
 }
 
-export default function ClaimInput({ busy, onSubmit }: Props) {
-  const [value, setValue] = useState("");
+export default function ClaimInput({ busy, submitDisabled = false, submitLabel, value, onChange, onSubmit }: Props) {
   const [mode, setMode] = useState<SearchMode>(() => {
     try {
       return localStorage.getItem("tl-mode") === "quick" ? "quick" : "deep";
@@ -43,7 +46,7 @@ export default function ClaimInput({ busy, onSubmit }: Props) {
   };
 
   const submit = () => {
-    if (busy || len < 4) return;
+    if (busy || submitDisabled || len < 4) return;
     onSubmit(value.trim(), mode);
   };
 
@@ -59,7 +62,7 @@ export default function ClaimInput({ busy, onSubmit }: Props) {
           aria-label="待核查信息"
           maxLength={2000}
           value={value}
-          onChange={(e) => setValue(e.target.value.slice(0, 2000))}
+          onChange={(e) => onChange(e.target.value.slice(0, 2000))}
           onKeyDown={(e) => {
             if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !e.nativeEvent.isComposing) {
               e.preventDefault();
@@ -101,15 +104,16 @@ export default function ClaimInput({ busy, onSubmit }: Props) {
           <span className="mono-label text-panel-soft hidden sm:block">CTRL + ENTER ↵</span>
           <button
             onClick={submit}
-            disabled={busy || len < 4}
+            disabled={busy || submitDisabled || len < 4}
+            aria-describedby="model-access-status"
             className={cn(
               "font-giant ml-auto flex items-center gap-2 px-8 py-3 text-xl tracking-wider transition-all",
-              busy || len < 4
+              busy || submitDisabled || len < 4
                 ? "cursor-not-allowed bg-[color-mix(in_srgb,var(--panel-fg)_15%,transparent)] text-[color-mix(in_srgb,var(--panel-fg)_35%,transparent)]"
                 : "bg-[color:var(--c-fg)] text-[color:var(--c-bg)] hover:translate-x-0.5 hover:-translate-y-0.5 hover:shadow-[6px_6px_0_0_color-mix(in_srgb,var(--panel-fg)_25%,transparent)]",
             )}
           >
-            {mode === "quick" ? "开始快速核查" : "开始深度核查"} ↤
+            {submitLabel ?? (mode === "quick" ? "开始快速核查" : "开始深度核查")} ↤
           </button>
         </div>
       </div>
@@ -121,7 +125,7 @@ export default function ClaimInput({ busy, onSubmit }: Props) {
           <button
             key={ex}
             disabled={busy}
-            onClick={() => setValue(ex)}
+            onClick={() => onChange(ex)}
             className="border border-ink px-3 py-1.5 text-xs font-medium transition-colors hover:bg-ink disabled:opacity-40"
           >
             {ex}

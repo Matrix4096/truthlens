@@ -2,9 +2,9 @@
  * agent-gw 网关客户端：为核查管线提供
  *  - webSearch:   POST /v1/search
  *  - fetchPage:   POST /v1/fetch
- *  - chatJson:    POST /v1/chat/completions (OpenAI 兼容, 强制 JSON 输出解析)
+ *  - chatJson:    用户自带 Key 的 OpenAI 兼容模型调用，强制 JSON 输出解析
  *
- * 凭证解析顺序：
+ * 搜索与网页抓取的凭证解析顺序（模型调用只接受显式传入的个人配置）：
  *  1. 环境变量 KIMI_API_KEY / KIMI_BASE_URL (/ KIMI_CHAT_ID)
  *  2. ~/.kimi/agent-gw.json
  *  3. /mnt/agents/.agent-gw.json
@@ -314,36 +314,17 @@ export async function fetchPage(url: string): Promise<string> {
 
 // ---------------- LLM (JSON) ----------------
 
-// ---------------- 外部 LLM 供应商（判定通道，可选） ----------------
-// agent-gw 凭证若无 chat 权限，可改用任意 OpenAI 兼容平台，三变量需同时配置：
-//   LLM_API_KEY   平台 API Key
-//   LLM_BASE_URL  填到版本号即可，如 https://api.deepseek.com 或 https://api.moonshot.cn/v1
-//   LLM_MODEL     如 deepseek-chat / kimi-k2.5 / glm-4.5-flash / qwen-plus
+// 模型调用必须携带用户配置；不读取站点 LLM 环境变量或使用搜索网关代付。
 export interface LlmConfig {
   apiKey: string;
   baseUrl: string;
   model: string;
 }
 
-let llmCached: LlmConfig | null | undefined;
-function loadLlmConfig(): LlmConfig | null {
-  if (llmCached !== undefined) return llmCached;
-  const apiKey = process.env.LLM_API_KEY?.trim();
-  const baseUrl = process.env.LLM_BASE_URL?.trim().replace(/\/+$/, "");
-  const model = process.env.LLM_MODEL?.trim();
-  llmCached = apiKey && baseUrl && model ? { apiKey, baseUrl, model } : null;
-  if (!llmCached && (apiKey || baseUrl || model)) {
-    console.warn("[llm] LLM_API_KEY / LLM_BASE_URL / LLM_MODEL 需同时配置，判定通道暂回落 agent-gw");
-  }
-  return llmCached;
-}
-
 /** baseUrl 已带版本号（/v1、/v4、/v1beta/openai…）时直接补端点名，否则按 OpenAI 惯例补 /v1。 */
 function chatPath(baseUrl: string): string {
   return /\/v\d+(beta)?(\/openai)?$/i.test(baseUrl) ? "/chat/completions" : "/v1/chat/completions";
 }
-
-const MODEL = "kimi-for-coding";
 
 interface ChatResponse {
   choices?: Array<{ message?: { content?: string } }>;
@@ -385,28 +366,34 @@ export function extractJson<T>(text: string): T | null {
 export async function chatJson<T>(
   system: string,
   user: string,
-  opts: { maxTokens?: number; retries?: number; timeoutMs?: number; llm?: LlmConfig | null } = {},
+  opts: { maxTokens?: number; retries?: number; timeoutMs?: number; llm: LlmConfig },
 ): Promise<T | null> {
+  const provided = opts?.llm;
+  if (!provided || ![provided.apiKey, provided.baseUrl, provided.model].every(
+    (value) => typeof value === "string" && value.trim().length > 0,
+  )) {
+    throw new Error("模型调用缺少有效的个人 API Key、平台地址或模型配置，请重新设置 API 密钥");
+  }
+  const llm: LlmConfig = {
+    apiKey: provided.apiKey.trim(),
+    baseUrl: provided.baseUrl.trim().replace(/\/+$/, ""),
+    model: provided.model.trim(),
+  };
   const maxTokens = opts.maxTokens ?? 8000;
   const retries = opts.retries ?? 2;
-  // 判定通道优先级：任务级自带 Key（BYOK） > 环境变量 LLM_* > agent-gw
-  const llm = opts.llm ?? loadLlmConfig();
-  const cfg: GwConfig = llm
-    ? { apiKey: llm.apiKey, baseUrl: llm.baseUrl, name: `llm(${llm.model}${opts.llm ? "@用户自带" : ""})` }
-    : { ...loadConfig(), name: "agent-gw" };
-  const path = llm ? chatPath(llm.baseUrl) : "/v1/chat/completions";
+  const cfg: GwConfig = { apiKey: llm.apiKey, baseUrl: llm.baseUrl, name: "用户模型" };
+  const path = chatPath(llm.baseUrl);
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const body: Record<string, unknown> = {
-        model: llm?.model ?? MODEL,
+        model: llm.model,
         messages: [
           { role: "system", content: system },
           { role: "user", content: user },
         ],
         max_tokens: maxTokens,
       };
-      // 外部供应商显式约束 JSON 输出，降低解析失败率（agent-gw 不保证支持该参数，不传）
-      if (llm) body.response_format = { type: "json_object" };
+      body.response_format = { type: "json_object" };
       // 与搜索/抓取统一使用双通道，原生 https 受出口网络限制时可回退到 fetch。
       const data = await postDual<ChatResponse>(cfg, path, body, opts.timeoutMs ?? 150_000);
       const content = data.choices?.[0]?.message?.content ?? "";

@@ -94,17 +94,11 @@ export interface SessionUser {
   id: number;
   username: string;
   role: "admin" | "user";
-  /** 是否已设置自带 LLM Key（设置后不占平台每日额度） */
+  /** 是否已配置可读取的个人模型密钥；核查必须先完成配置 */
   hasLlmKey?: boolean;
   /** 已设置的自带 Key 平台（LLM_PROVIDERS 的 key），用于界面展示，不暴露 Key 本体 */
   llmProvider?: string | null;
 }
-
-/** 未注册游客的免费核查次数上限（按游客身份与访问 IP 的并集计数，清除浏览器数据不重置） */
-export const GUEST_LIMIT = 1;
-
-/** 注册用户每日免费核查次数上限（按 UTC+8 自然日重置；管理员与自带 Key 用户不限） */
-export const USER_DAILY_LIMIT = 5;
 
 /** 自带 Key 支持的 OpenAI 兼容平台预设（用户只需选平台 + 填 Key） */
 export const LLM_PROVIDERS = {

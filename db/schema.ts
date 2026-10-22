@@ -24,7 +24,7 @@ export const verifications = mysqlTable("verifications", {
   userId: bigint("user_id", { mode: "number", unsigned: true }),
   /** 归属：游客标识（注册用户为 NULL） */
   guestId: varchar("guest_id", { length: 64 }),
-  /** 游客访问 IP 的 HMAC-SHA256 摘要（不明文落库），用于防止清除浏览器状态重置免费次数 */
+  /** 旧游客记录的 IP 摘要；保留以兼容已有数据，新核查不使用此字段计数 */
   ipHash: varchar("ip_hash", { length: 64 }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (t) => [

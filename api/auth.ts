@@ -32,6 +32,21 @@ export function decryptApiKey(stored: string): string {
   return Buffer.concat([decipher.update(Buffer.from(encHex, "hex")), decipher.final()]).toString("utf-8");
 }
 
+const modelKeySchema = z.string().trim().min(10, "API Key 至少需要 10 个字符").max(200, "API Key 最多 200 个字符")
+  .regex(/^[\x21-\x7e]+$/, "API Key 不能包含空格或非 ASCII 字符");
+
+/** Return readiness only; a stored or unreadable secret must never reach the client. */
+function modelReadiness(encrypted: string | null, provider: string | null) {
+  if (encrypted && provider && Object.hasOwn(LLM_PROVIDERS, provider)) {
+    try {
+      if (modelKeySchema.safeParse(decryptApiKey(encrypted)).success) {
+        return { hasLlmKey: true, llmProvider: provider };
+      }
+    } catch { /* A changed APP_SECRET or damaged ciphertext requires reconfiguration. */ }
+  }
+  return { hasLlmKey: false, llmProvider: null };
+}
+
 // ---------- 密码散列（scrypt + 随机盐） ----------
 
 function deriveKey(pw: string, salt: string): Promise<Buffer> {
@@ -191,7 +206,7 @@ export const authRouter = createRouter({
       });
     const id = Number((inserted as unknown as Array<{ insertId: number | string }>)[0]?.insertId ?? 0);
     const token = await createSession(id);
-    const user: SessionUser = { id, username: input.username, role: "user" };
+    const user: SessionUser = { id, username: input.username, role: "user", hasLlmKey: false, llmProvider: null };
     return { token, user };
   }),
 
@@ -204,7 +219,10 @@ export const authRouter = createRouter({
       throw new TRPCError({ code: "UNAUTHORIZED", message: "用户名或密码错误" });
     }
     const token = await createSession(u.id);
-    const user: SessionUser = { id: u.id, username: u.username, role: u.role === "admin" ? "admin" : "user" };
+    const user: SessionUser = {
+      id: u.id, username: u.username, role: u.role === "admin" ? "admin" : "user",
+      ...modelReadiness(u.llmApiKeyEnc, u.llmProvider),
+    };
     return { token, user };
   }),
 
@@ -224,8 +242,6 @@ export const authRouter = createRouter({
     await ensureAdmin();
     const user = await getSessionUser(ctx);
     if (!user) return null;
-    let hasLlmKey = false;
-    let llmProvider: string | null = null;
     try {
       const db = getDb();
       const rows = await db
@@ -233,12 +249,10 @@ export const authRouter = createRouter({
         .from(users)
         .where(eq(users.id, user.id))
         .limit(1);
-      hasLlmKey = !!rows[0]?.k;
-      llmProvider = rows[0]?.p ?? null;
+      return { ...user, ...modelReadiness(rows[0]?.k ?? null, rows[0]?.p ?? null) };
     } catch {
-      /* 忽略，按未设置计 */
+      throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "暂时无法读取模型配置，请稍后重试" });
     }
-    return { ...user, hasLlmKey, llmProvider };
   }),
 
   /** 设置/更新自带 LLM Key：先真实调用一次该平台验证有效，再加密落库 */
@@ -246,7 +260,7 @@ export const authRouter = createRouter({
     .input(
       z.object({
         provider: z.enum(["deepseek", "kimi", "zhipu", "qwen"]),
-        apiKey: z.string().trim().min(10).max(200),
+        apiKey: modelKeySchema,
       }),
     )
     .mutation(async ({ input, ctx }) => {
@@ -261,7 +275,7 @@ export const authRouter = createRouter({
           llm: { apiKey: input.apiKey, baseUrl: preset.baseUrl, model: preset.model },
         },
       );
-      if (!probe) {
+      if (probe?.ok !== true) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: `无法通过 ${preset.label} 的模型调用验证，请检查 Key 是否正确、账户是否有余额`,
@@ -274,7 +288,7 @@ export const authRouter = createRouter({
       return { ok: true as const };
     }),
 
-  /** 清除自带 Key，回到平台每日免费额度 */
+  /** 清除个人模型密钥；再次核查前必须重新配置 */
   clearLlmKey: authedQuery.mutation(async ({ ctx }) => {
     await getDb()
       .update(users)

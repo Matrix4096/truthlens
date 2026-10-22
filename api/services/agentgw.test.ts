@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import type { ClientRequest, IncomingMessage } from "node:http";
 import https from "node:https";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { LLM_PROVIDERS } from "@contracts/types";
 
 vi.mock("node:https", () => ({ default: { request: vi.fn() } }));
 
@@ -15,12 +16,13 @@ type NativeReply = {
 };
 
 function nativeReply(reply: NativeReply = {}) {
+  const payloads: string[] = [];
   vi.mocked(https.request).mockImplementationOnce(((
     _options: unknown,
     callback: (response: IncomingMessage) => void,
   ) => {
     const request = new EventEmitter() as ClientRequest;
-    request.write = vi.fn(() => true);
+    request.write = vi.fn((payload: string) => { payloads.push(payload); return true; });
     request.destroy = vi.fn(() => request);
     request.end = vi.fn(() => {
       const dispatch = () => {
@@ -46,6 +48,7 @@ function nativeReply(reply: NativeReply = {}) {
     }) as ClientRequest["end"];
     return request;
   }) as typeof https.request);
+  return payloads;
 }
 
 beforeEach(() => {
@@ -196,8 +199,102 @@ describe("gateway transport boundaries", () => {
     nativeReply({ status: 401 });
     const { chatJson } = await import("./agentgw");
 
-    await expect(chatJson("system", "user")).resolves.toBeNull();
+    await expect(chatJson("system", "user", {
+      llm: { apiKey: "test-user-key-only", baseUrl: "https://model.invalid/v1", model: "test-model" },
+    })).resolves.toBeNull();
     expect(https.request).toHaveBeenCalledTimes(1);
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("personal model credentials", () => {
+  const personal = {
+    apiKey: "test-user-key-only",
+    baseUrl: "https://personal-model.invalid/v1",
+    model: "personal-model-only",
+  };
+
+  beforeEach(() => {
+    // A configured site account must never be used by chatJson.
+    vi.stubEnv("LLM_API_KEY", "test-site-key-never-use");
+    vi.stubEnv("LLM_BASE_URL", "https://site-model.invalid/v1");
+    vi.stubEnv("LLM_MODEL", "site-model-never-use");
+    vi.stubEnv("KIMI_CHAT_ID", "site-chat-never-use");
+  });
+
+  it.each([
+    { label: "missing options", opts: undefined },
+    { label: "null options", opts: null },
+    { label: "missing model config", opts: {} },
+    { label: "null model config", opts: { llm: null } },
+    { label: "missing key", opts: { llm: { baseUrl: personal.baseUrl, model: personal.model } } },
+    { label: "blank key", opts: { llm: { ...personal, apiKey: "   " } } },
+    { label: "blank endpoint", opts: { llm: { ...personal, baseUrl: "\n " } } },
+    { label: "blank model", opts: { llm: { ...personal, model: "\t " } } },
+  ])("rejects $label before any request despite site credentials", async ({ opts }) => {
+    const { chatJson } = await import("./agentgw");
+
+    await expect(chatJson("system", "user", opts as Parameters<typeof chatJson>[2]))
+      .rejects.toThrow("模型调用缺少有效的个人 API Key");
+    expect(https.request).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([
+    { provider: "deepseek", hostname: "api.deepseek.com", path: "/v1/chat/completions", model: "deepseek-chat" },
+    { provider: "kimi", hostname: "api.moonshot.cn", path: "/v1/chat/completions", model: "kimi-k2.5" },
+    { provider: "zhipu", hostname: "open.bigmodel.cn", path: "/api/paas/v4/chat/completions", model: "glm-4.5-flash" },
+    { provider: "qwen", hostname: "dashscope.aliyuncs.com", path: "/compatible-mode/v1/chat/completions", model: "qwen-plus" },
+  ] as const)("uses only the supplied key and $provider preset", async ({ provider, hostname, path, model }) => {
+    const payloads = nativeReply({ chunks: [JSON.stringify({ choices: [{ message: { content: '{"ok":true}' } }] })] });
+    const { chatJson } = await import("./agentgw");
+
+    await expect(chatJson("system", "user", {
+      llm: { apiKey: personal.apiKey, ...LLM_PROVIDERS[provider] },
+      maxTokens: 200,
+    })).resolves.toEqual({ ok: true });
+    expect(https.request).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      hostname,
+      path,
+      headers: expect.objectContaining({ Authorization: `Bearer ${personal.apiKey}` }),
+    }), expect.any(Function));
+    expect(https.request).toHaveBeenCalledWith(expect.objectContaining({
+      headers: expect.not.objectContaining({ "X-Kimi-Chat-Id": expect.anything() }),
+    }), expect.any(Function));
+    expect(JSON.parse(payloads[0])).toMatchObject({
+      model, max_tokens: 200, response_format: { type: "json_object" },
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("never switches account after a personal key is rejected and does not expose its echoed value", async () => {
+    nativeReply({ status: 401, chunks: [JSON.stringify({ error: `Invalid key ${personal.apiKey}` })] });
+    const { chatJson } = await import("./agentgw");
+
+    await expect(chatJson("system", "user", { llm: personal })).resolves.toBeNull();
+    expect(https.request).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      hostname: "personal-model.invalid",
+      headers: expect.objectContaining({ Authorization: `Bearer ${personal.apiKey}` }),
+    }), expect.any(Function));
+    expect(fetch).not.toHaveBeenCalled();
+    expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toContain(personal.apiKey);
+    expect(JSON.stringify(vi.mocked(console.error).mock.calls)).toContain("HTTP 401");
+  });
+
+  it("keeps the same personal account, model and endpoint when changing network transport", async () => {
+    nativeReply({ error: "ECONNRESET" });
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: '{"ok":true}' } }] })));
+    const { chatJson } = await import("./agentgw");
+
+    await expect(chatJson("system", "user", { llm: personal })).resolves.toEqual({ ok: true });
+    expect(https.request).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledExactlyOnceWith("https://personal-model.invalid/v1/chat/completions", expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: `Bearer ${personal.apiKey}` }),
+      body: expect.any(String),
+    }));
+    const init = vi.mocked(fetch).mock.calls[0][1];
+    expect(JSON.parse(String(init?.body)).model).toBe(personal.model);
+    expect(init?.headers).not.toHaveProperty("X-Kimi-Chat-Id");
   });
 });
