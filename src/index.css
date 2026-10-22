@@ -368,7 +368,7 @@
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  width: 1.25em;
+  width: 1.1em;
   height: 1.25em;
   isolation: isolate;
   pointer-events: none;
@@ -376,20 +376,21 @@
 .truthlens-hero-title .black-hole-mark::before {
   content: "";
   position: absolute;
-  inset: 0 -0.1em;
+  inset: 0.24em 0.02em 0.18em;
   z-index: 0;
+  opacity: 0.55;
   background: radial-gradient(ellipse closest-side, var(--black-hole-glow), transparent 82%);
   pointer-events: none;
 }
 .truthlens-hero-title .black-hole-canvas,
 .truthlens-hero-title .black-hole-fallback {
   position: absolute;
-  top: 50%;
+  top: calc(50% + 0.035em);
   left: 50%;
   z-index: 1;
   display: block;
-  width: 1.55em;
-  height: 0.98em;
+  width: 1.16em;
+  height: 0.734em;
   max-width: none;
   transform: translate(-50%, -50%);
 }
